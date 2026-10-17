@@ -40,6 +40,7 @@ app.use((req, res, next) => { res.setTimeout(10000, () => { if (!res.headersSent
 // In-flight request table, for diagnosing stalls: GET /api/_inflight
 const inflight = new Map(); let reqSeq = 0;
 app.use((req, res, next) => { const id = ++reqSeq; inflight.set(id, { path: req.originalUrl.slice(0, 80), at: Date.now() }); res.on('close', () => inflight.delete(id)); next(); });
+app.get('/healthz', (_req, res) => res.json({ ok: true }));   // platform health check, before sign-in; says nothing else
 app.use(authMiddleware());   // master password, judge links and the program token (src/auth.js)
 app.get('/api/_inflight', adminOnly, (_req, res) => res.json([...inflight.values()].map((r) => ({ ...r, ms: Date.now() - r.at })).sort((a, b) => b.ms - a.ms)));
 app.use(express.json({ limit: '25mb' }));

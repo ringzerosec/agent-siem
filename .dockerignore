@@ -7,3 +7,7 @@ data
 .gstack
 *.log
 docs
+brain/.venv*
+brain/__pycache__
+**/__pycache__
+run-real.sh

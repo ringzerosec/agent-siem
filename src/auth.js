@@ -75,9 +75,13 @@ export function revokeJudgeLink(id) {
 
 // ---- login lockout ------------------------------------------------------------
 const fails = new Map();   // client -> { n, until }
-// Behind a local reverse proxy (Caddy) every request comes from loopback, so
-// take the client from X-Forwarded-For there; otherwise the socket address.
+// Behind a proxy every request comes from the proxy, so a shared lockout would
+// let anyone lock everyone out. A trusted proxy can name the client in a header (CLIENT_IP_HEADER; it
+// overwrites any value a client sends). Behind a local reverse proxy (Caddy)
+// requests come from loopback: take the client from X-Forwarded-For there.
+// Otherwise the socket address.
 function clientOf(req) {
+  const ch = process.env.CLIENT_IP_HEADER?.toLowerCase(); if (ch && req.headers[ch]) return String(req.headers[ch]);
   const sock = req.socket?.remoteAddress || '';
   const loop = sock === '127.0.0.1' || sock === '::1' || sock === '::ffff:127.0.0.1';
   return (loop && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || sock;
