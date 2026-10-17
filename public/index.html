@@ -101,11 +101,11 @@
   /* The wall */
   #wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); grid-auto-rows: 268px; gap: 12px; padding: 14px 20px; overflow: auto; align-content: start; }
   /* Endpoint card (21st.dev "Server Card" pattern): status dot + hostname + pill, team/agents meta, graph, spec row. */
-  .tile { position: relative; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; transition: border-color .2s, box-shadow .2s; }
+  .tile { position: relative; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; }
   .tile:hover { border-color: var(--primary); box-shadow: 0 4px 14px rgba(1,105,111,.10); }
   .tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   .tile.high { border-color: var(--event-pii); }
-  .tile.crit { border-color: var(--destructive); box-shadow: 0 0 0 1px var(--destructive), 0 0 24px rgba(220,38,38,.18); animation: pulse 1.6s ease-in-out 3; }
+  .tile.crit { border-color: var(--destructive); box-shadow: 0 0 0 1px var(--destructive), 0 0 24px rgba(220,38,38,.18); }
   .tile .hd { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 8px; padding: 11px 12px 8px; border-bottom: 1px solid var(--border); background: var(--card); }
   .tile .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
   .tile.high .dot { background: #d97706; box-shadow: 0 0 0 3px rgba(217,119,6,.18); }
@@ -118,16 +118,14 @@
   .tile .agents:not(:empty)::before { content: '·'; margin-right: 6px; }
   .tile .sim { font: 500 9.5px var(--mono); text-transform: uppercase; letter-spacing: .04em; border: 1px dashed var(--border); border-radius: 4px; padding: 0 4px; color: var(--muted-foreground); }
   .tile .net { flex: 1; min-height: 0; background: var(--canvas); position: relative; }
-  .tile .loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11.5px; color: var(--muted-foreground); z-index: 1; background: linear-gradient(90deg, var(--canvas) 0%, var(--accent) 50%, var(--canvas) 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
-  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-  @media (prefers-reduced-motion: reduce) { .tile .loading { animation: none; } }
+  .tile .loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11.5px; color: var(--muted-foreground); z-index: 1; background: var(--canvas); }
   .tile .ft { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-height: 36px; padding: 7px 12px; border-top: 1px solid var(--border); background: var(--card); font-size: 11px; color: var(--muted-foreground); }
   .tile .spec { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
   .tile .spec div { display: flex; flex-direction: column; line-height: 1.2; }
   .tile .spec b { font: 600 12px var(--mono); color: var(--foreground); }
   .tile .spec span { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   .tile.idle { opacity: .6; }
-  .tile.idle.crit, .tile.idle.high { animation: none; box-shadow: none; }
+  .tile.idle.crit, .tile.idle.high { box-shadow: none; }
   #wallEmpty { grid-column: 1 / -1; display: grid; place-items: center; color: var(--muted-foreground); }
   #events { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   #events[hidden] { display: none; }
@@ -216,7 +214,6 @@
   .tl .ts { color: var(--muted-foreground); }
   .node .actions { display: flex; gap: 8px; margin: 8px 0 12px; flex-wrap: wrap; }
   @media (max-width: 1000px) { #detail { grid-template-columns: 1fr; grid-template-rows: 52vh 1fr; } #canvas { border-right: 0; border-bottom: 1px solid var(--border); } }
-  @media (prefers-reduced-motion: reduce) { .tile.crit { animation: none; } }
 </style>
 </head>
 <body>
@@ -411,11 +408,18 @@
     net.fit({ animation: false });
     if (net === state.net && net.getScale() < 0.7) net.moveTo({ scale: 0.7, position: net.getViewPosition() });
   }
+  // Lay the graph out without showing it move: vis computes the physics with
+  // redraws blocked (stabilize), then physics is switched off and the graph
+  // is drawn once in its final place. ms is kept as the effort budget.
   function settle(net, ms, fit = true) {
-    net.setOptions({ physics: { enabled: true } });
     clearTimeout(net.__settle);
-    net.__settle = setTimeout(() => { net.setOptions({ physics: { enabled: false } }); if (fit) fitReadable(net); }, ms);
+    net.setOptions({ physics: { enabled: true } });
+    const done = () => { clearTimeout(net.__settle); net.setOptions({ physics: { enabled: false } }); if (fit) fitReadable(net); };
+    net.once('stabilized', done);
+    net.__settle = setTimeout(done, 3000);   // never leave physics running (empty graphs never report stabilized)
+    net.stabilize(Math.max(100, Math.round(ms / 4)));
   }
+
 
   // ---- the wall ---------------------------------------------------------
   // Only redraw tiles whose device changed; a full redraw of every tile on
@@ -454,7 +458,6 @@
       const chips = Object.entries(d.threats || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<span class="badge ${d.critical ? 'destructive' : d.high ? 'warning' : 'outline'}" title="${esc(THREATS[k] || k)}">${k}${n > 1 ? ' ×' + n : ''}</span>`).join('');
       t.el.querySelector('.ft').innerHTML = chips || `<div class="spec"><div><b>${d.procs ?? 0}</b><span>processes</span></div><div><b>${d.actions ?? 0}</b><span>actions</span></div><div><b title="${fmt(d.last)}">${ago(d.last)}</b><span>last seen</span></div></div>`;
       const cls = d.critical ? 'crit' : d.high ? 'high' : '';
-      if (cls === 'crit' && !t.el.classList.contains('crit')) { t.el.style.animation = 'none'; void t.el.offsetWidth; t.el.style.animation = ''; }
       t.el.classList.remove('crit', 'high'); if (cls) t.el.classList.add(cls);
       t.el.classList.toggle('idle', !d.actions);
       if (!d.actions) t.el.querySelector('.ft').innerHTML = `<span class="dim">idle · no activity in this range${d.alerts ? ' · ' + d.alerts + ' past alert' + (d.alerts > 1 ? 's' : '') : ''}</span>`;
@@ -507,7 +510,14 @@
       // on release the graph settles briefly and freezes again (no refit).
       state.net.on('dragStart', (p) => { if (p.nodes.length) { clearTimeout(state.net.__settle); state.net.setOptions({ physics: { enabled: true } }); } });
       state.net.on('dragEnd', (p) => { if (p.nodes.length) settle(state.net, 1200, false); });
-      state.net.on('click', (p) => { if (p.nodes.length) selectNode(p.nodes[0]); });
+      state.net.on('click', (p) => {
+        if (p.nodes.length) { selectNode(p.nodes[0]); return; }
+        if (p.edges.length) return;
+        // Empty space: drop any alert spotlight and zoom back out to the whole graph.
+        if (!$('#spotClear').hidden) { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); }
+        else state.net.unselectAll();
+        state.net.fit({ animation: false });
+      });
       state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
     } else {
       const have = new Set(state.nodes.getIds());
@@ -545,7 +555,7 @@
     state.nodes.update(state.nodes.get().map((n) => ({ id: n.id, opacity: !a || keepN.has(n.id) ? 1 : 0.12, font: { ...(n.font || {}), color: !a || keepN.has(n.id) ? css('--label') : 'rgba(0,0,0,0.12)' } })));
     state.edges.update(state.edges.get().map((e) => ({ id: e.id, hidden: !!a && !keepE.has(e.id) })));
     state.net.unselectAll();
-    if (a) state.net.fit({ nodes: a.nodes, animation: { duration: 400 } }); else fitReadable(state.net);
+    if (a) state.net.fit({ nodes: a.nodes, animation: false }); else fitReadable(state.net);
     $('#spotClear').hidden = !a;
   }
   function renderEndpoint(id, alerts) {
@@ -597,7 +607,7 @@
       const open = openGroups.has(k);
       const div = document.createElement('div'); div.className = `panel group ${worst}`;
       div.innerHTML = `<div class="gh"><span class="badge destructive">${esc(k)}</span><span class="gt">${esc(THREATS[k] || k)}</span><span class="badge outline">${items.length}</span><span class="caret">${open ? '▾' : '▸'}</span></div>
-        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>Recommended response</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}</div></li>`; }).join('')}</ul>`;
+        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>${a.blocked === true ? 'Follow-up' : 'Recommended response'}</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}</div></li>`; }).join('')}</ul>`;
       div.querySelector('.gh').onclick = () => { if (openGroups.has(k)) openGroups.delete(k); else openGroups.add(k); renderAlerts(alerts); };
       div.querySelectorAll('.items > li').forEach((el) => { el.onclick = (ev) => { if (ev.target.closest('a')) return; ev.stopPropagation(); const a = items[Number(el.dataset.i)]; const key = `${k}:${el.dataset.i}:${a.summary}`; if (openAlerts.has(key)) openAlerts.delete(key); else openAlerts.add(key); el.classList.toggle('open'); spotlight(el.classList.contains('open') ? a : null); }; });
       box.appendChild(div);
@@ -687,7 +697,7 @@
       const sevCell = e.alert ? `<td class="sev" title="${esc(e.alert.title)}"><span class="badge ${e.alert.severity === 'critical' ? 'solid' : e.alert.severity === 'high' ? 'warning' : 'outline'}">${esc(e.alert.threat)}</span></td>` : '<td class="sev"></td>';
       const flag = e.sensitive ? ' <span class="badge warning">secret</span>' : (e.targetKind === 'Host' && !e.approved) ? ' <span class="badge destructive">unapproved</span>' : e.vulns ? ` <span class="badge destructive">${e.vulns} OSV</span>` : '';
       tr.innerHTML = sevCell + `<td>${new Date(e.ts).toLocaleString()}</td><td class="sans">${esc(e.device)}${e.simulated ? ' <span class="dim">sim</span>' : ''}</td><td>${esc(e.agent || '')}</td><td>${esc(e.process)} <span class="dim">${e.pid}</span></td><td>${esc(e.action.toLowerCase())}</td><td title="${esc(e.argv || e.target)}">${esc(e.argv || e.target)}${e.port ? ':' + e.port : ''}${flag}</td><td>${e.allowed ? 'allowed' : '✗ refused' + (e.reason ? ' · ' + esc(e.reason) : '')}</td>`;
-      tr.onclick = async () => { setView('wall'); await openDevice(e.device); if (e.targetId != null) setTimeout(() => { try { state.net.selectNodes([e.processId, e.targetId]); state.net.fit({ nodes: [e.processId, e.targetId], animation: true }); selectNode(e.targetId); } catch {} }, 400); };
+      tr.onclick = async () => { setView('wall'); await openDevice(e.device); if (e.targetId != null) setTimeout(() => { try { state.net.selectNodes([e.processId, e.targetId]); state.net.fit({ nodes: [e.processId, e.targetId], animation: false }); selectNode(e.targetId); } catch {} }, 400); };
       tb.appendChild(tr);
     }
   }
@@ -696,7 +706,7 @@
 
   $('#back').onclick = closeDevice;
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
-  $('#fit').onclick = () => state.net && state.net.fit({ animation: true });
+  $('#fit').onclick = () => state.net && fitReadable(state.net);
   $('#spotClear').onclick = () => { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); };
   $('#pathsOnly').onclick = () => { state.pathsOnly = !state.pathsOnly; state.pathsAuto = false; if (state.device) { state.net?.destroy(); state.net = null; openDevice(state.device, true); } };
   // Header counters filter the wall: critical, high (includes critical), or everything.

@@ -233,7 +233,14 @@ export const RESPONSE = {
   T8: 'Isolate the endpoint, remove the dropped binary, and check the daemon’s integrity.',
   T9: 'Patch the AI framework to the fixed version and review sessions that used it.',
 };
-const enrich = (a) => ({ ...a, attack: ATTACK[a.threat], response: RESPONSE[a.threat] });
+// When Ring Zero Security already refused the step that mattered, the analyst
+// is following up, not stopping an attack.
+const CONTAINED_RESPONSE = {
+  T2: 'Blocked by Ring Zero Security: nothing left the endpoint. Rotate the credential that was read as a precaution and review why the agent read it.',
+  T5: 'Blocked by Ring Zero Security: the outbound connection was refused. Review the session to see what the agent was trying to send.',
+  T8: 'Blocked by Ring Zero Security. Check the endpoint for anything the agent dropped before the block.',
+};
+const enrich = (a) => ({ ...a, attack: ATTACK[a.threat], response: a.blocked === true ? (CONTAINED_RESPONSE[a.threat] || 'Blocked by Ring Zero Security. Review the session to confirm intent.') : RESPONSE[a.threat] });
 
 const APPROVED_MCP = (process.env.APPROVED_MCP || 'filesystem,github,postgres').split(',').map((s) => s.trim()).filter(Boolean);
 

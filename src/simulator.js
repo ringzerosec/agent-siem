@@ -45,7 +45,7 @@ class Session {
     this.nextPid = this.rootPid + 1;
     this.step = 0;
     this.drifts = Math.random() < 0.25;          // about a quarter of sessions drift
-    this.driftAt = 8 + Math.floor(Math.random() * 20);
+    this.driftAt = 3 + Math.floor(Math.random() * 10);
     this.drifted = false;
   }
   ev(kind, pid, target, extra = {}) {
@@ -71,7 +71,9 @@ class Session {
     return [this.ev('tool', this.rootPid, pick(['filesystem/read_file', 'github/create_issue', 'postgres/query']))];
   }
   // The drift: read a credential, write it into an innocuous file, spawn a
-  // child that connects to an unapproved host.
+  // child that connects to an unapproved host. Every endpoint runs Ring Zero
+  // Security in enforce mode, so that connection is refused: the alert shows
+  // the attempt, and the path is contained.
   drift() {
     this.drifted = true;
     const c = this.child('curl');
@@ -79,13 +81,13 @@ class Session {
       this.ev('read', this.rootPid, pick(SECRETS)),
       this.ev('write', this.rootPid, '/home/dev/app/docs/diagram.md'),
       c.ev,
-      this.ev('connect', c.pid, pick(UNAPPROVED) + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent }),
+      { ...this.ev('connect', c.pid, pick(UNAPPROVED) + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)' },
     ];
   }
   tick() {
     this.step++;
     if (this.step > SESSION_LEN) {   // the run ended; a new session starts on the same device
-      this.n = (this.n || 1) + 1; this.id = `${this.device}-s${this.n}`; this.step = 1; this.drifted = false; this.drifts = Math.random() < 0.25; this.driftAt = 8 + Math.floor(Math.random() * 20);
+      this.n = (this.n || 1) + 1; this.id = `${this.device}-s${this.n}`; this.step = 1; this.drifted = false; this.drifts = Math.random() < 0.25; this.driftAt = 3 + Math.floor(Math.random() * 10);
       this.rootPid += 1000; this.nextPid = this.rootPid + 1;
     }
     if (this.drifts && !this.drifted && this.step >= this.driftAt) return this.drift();

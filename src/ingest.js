@@ -186,8 +186,8 @@ export async function ingestEvent(ev) {
         `MATCH (p:Process {key: $key})
          MERGE (h:Host {name: $host})
            ON CREATE SET h.approved = $approved, h.routable = $routable, h.resolved_as = $resolvedAs
-         CREATE (p)-[:CONNECTED {ts: $ts, event: $id, allowed: $allowed, port: $port}]->(h)`,
-        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), resolvedAs: approvedAs(host), ts, id: ev.id || '', allowed, port: Number(port) || 443 } },
+         CREATE (p)-[:CONNECTED {ts: $ts, event: $id, allowed: $allowed, port: $port, reason: $reason}]->(h)`,
+        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), resolvedAs: approvedAs(host), ts, id: ev.id || '', allowed, port: Number(port) || 443, reason: ev.reason || '' } },
       );
       break;
     }
