@@ -19,6 +19,8 @@ import { ingestMany, ingestMcpServers, ingestNotes } from './ingest.js';
 import * as bus from './bus.js';
 import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
+import { ask, getEngineerJob, reset as resetEngineer } from './engineer.js';
+import { synth, warmTts } from './tts.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
@@ -28,7 +30,7 @@ const PORT = Number(process.env.PORT || 8080);
 const app = express();
 // A slow graph query must never pin a browser connection: answer 503 after
 // 10 s so the client can retry, and recycle idle keep-alive sockets quickly.
-app.use((req, res, next) => { res.setTimeout(10000, () => { if (!res.headersSent) { res.status(503).json({ error: 'timeout' }); } }); next(); });
+app.use((req, res, next) => { if (req.path === '/api/tts') return next(); res.setTimeout(10000, () => { if (!res.headersSent) { res.status(503).json({ error: 'timeout' }); } }); next(); });
 // In-flight request table, for diagnosing stalls: GET /api/_inflight
 const inflight = new Map(); let reqSeq = 0;
 app.use((req, res, next) => { const id = ++reqSeq; inflight.set(id, { path: req.originalUrl.slice(0, 80), at: Date.now() }); res.on('close', () => inflight.delete(id)); next(); });
@@ -129,6 +131,33 @@ app.post('/api/notes', async (req, res, next) => {
     if (bus.enabled()) { await bus.publishArray('notes', notes); return res.status(202).json({ queued: notes.length }); }
     await writeNotes(notes); res.json({ ingested: notes.length });
   } catch (e) { next(e); }
+});
+
+// --- security engineer (conversational, drives the screen) -----------------
+app.post('/api/engineer', (req, res) => {
+  const { sid, message, screen } = req.body || {};
+  if (!sid || !message) return res.status(400).json({ error: 'sid and message are required' });
+  const job = ask({ sid: String(sid), message: String(message).slice(0, 2000), screen });
+  res.status(202).json({ id: job.id });
+});
+app.get('/api/engineer/:id', (req, res) => {
+  const job = getEngineerJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'no such request' });
+  const since = Number(req.query.since || 0);
+  res.json({ status: job.status, events: job.events.slice(since), next: job.events.length });
+});
+app.post('/api/engineer/reset', (req, res) => { resetEngineer(String(req.body?.sid || '')); res.json({ ok: true }); });
+
+// Local neural voice (Kokoro). One sentence per request; the browser pipelines them.
+app.get('/api/tts', async (req, res) => {
+  const text = String(req.query.text || '').slice(0, 400).trim();
+  if (!text) return res.status(400).end();
+  let gone = false; req.on('close', () => { if (!res.headersSent) gone = true; });
+  try {
+    const wav = await synth(text, { cancelled: () => gone });
+    if (!wav) return res.status(499).end();
+    res.set({ 'content-type': 'audio/wav', 'cache-control': 'private, max-age=3600' }).send(wav); }
+  catch (e) { res.status(503).json({ error: 'tts unavailable: ' + e.message }); }
 });
 
 // --- triage agent ----------------------------------------------------------
@@ -498,4 +527,5 @@ await refreshIps(); setInterval(refreshIps, 10 * 60 * 1000);
 if (await bus.start()) bus.consume({ onEvents: writeEvents, onMcp: writeMcp, onNotes: writeNotes });
 { const r = await gr().roQuery('MATCH (s:Session) RETURN s.id AS id ORDER BY coalesce(s.started, 0) DESC'); for (const row of r.data || []) scheduleDetect(row.id, false); }   // newest sessions first
 const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}`));
+if (process.env.TTS !== 'off') warmTts();
 srv.keepAliveTimeout = 5000; srv.headersTimeout = 11000;
