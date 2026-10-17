@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Watch</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Dark security console: calm slate surfaces, one red for alerts, one amber for high. */
+  :root {
+    --bg: #0f1216; --panel: #161b22; --panel-2: #1c2330; --line: #2a3340;
+    --fg: #e6ebf2; --muted: #8b97a8; --accent: #5aa9ff;
+    --crit: #ff4d4f; --high: #f5a623; --med: #c9d1d9; --ok: #3ddc84;
+    --font: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font); display: grid; grid-template-rows: 48px 1fr; }
+  header { display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  header .live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  header .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
+  header .live.off i { background: var(--crit); }
+  header .spacer { flex: 1; }
+  header button { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  main { display: grid; grid-template-columns: 300px 1fr 360px; min-height: 0; }
+  main > section { min-width: 0; min-height: 0; overflow: auto; }
+  aside, .right { background: var(--panel); border-right: 1px solid var(--line); }
+  .right { border-right: 0; border-left: 1px solid var(--line); }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 14px 8px; font-weight: 600; }
+  .sessions { list-style: none; margin: 0; padding: 0 8px; }
+  .sessions li { padding: 10px; border-radius: 8px; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; border: 1px solid transparent; }
+  .sessions li:hover { background: var(--panel-2); }
+  .sessions li.active { border-color: var(--accent); background: var(--panel-2); }
+  .sessions li.crit { border-left: 3px solid var(--crit); }
+  .sessions li.high { border-left: 3px solid var(--high); }
+  .sessions .id { font-family: var(--mono); font-size: 13px; }
+  .sessions .agent, .sessions .meta { color: var(--muted); font-size: 12px; grid-column: 1 / -1; }
+  .badge { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--muted); align-self: start; }
+  .badge.crit { background: var(--crit); color: #fff; } .badge.high { background: var(--high); color: #1a1200; }
+  .sessions .top { grid-column: 1 / -1; font-size: 12px; color: var(--crit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #canvas { position: relative; }
+  #graph { position: absolute; inset: 0; }
+  .toolbar { position: absolute; top: 10px; left: 12px; display: flex; gap: 8px; z-index: 2; align-items: center; }
+  .toolbar .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--muted); }
+  .toolbar .chip b { color: var(--fg); font-family: var(--mono); font-weight: 500; }
+  .toolbar button { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .legend { position: absolute; bottom: 10px; left: 12px; display: flex; gap: 12px; font-size: 11px; color: var(--muted); z-index: 2; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+  .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+  .alerts { list-style: none; margin: 0; padding: 0 8px; }
+  .alerts li { padding: 10px; border-radius: 8px; margin-bottom: 6px; background: var(--panel-2); cursor: pointer; border-left: 3px solid var(--med); }
+  .alerts li.critical { border-left-color: var(--crit); } .alerts li.high { border-left-color: var(--high); }
+  .alerts .t { font-weight: 600; font-size: 13px; } .alerts .s { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-top: 3px; word-break: break-all; }
+  .detail { padding: 0 14px 14px; }
+  .detail .kind { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .detail .name { font-family: var(--mono); font-size: 13px; word-break: break-all; margin: 4px 0 10px; }
+  .detail dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0 0 12px; }
+  .detail dt { color: var(--muted); } .detail dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+  .tl { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+  .tl li { display: grid; grid-template-columns: 64px 70px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); font-family: var(--mono); }
+  .tl li.refused { color: var(--crit); }
+  .tl .ts { color: var(--muted); }
+  .detail .actions { display: flex; gap: 8px; margin: 8px 0 12px; }
+  .detail .actions button { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+  .hint { color: var(--muted); font-size: 12px; padding: 0 14px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto; } aside, .right { border: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Watch</h1>
+  <span class="live" id="live"><i></i> live</span>
+  <span class="spacer"></span>
+  <span class="chip" id="totals" style="color:var(--muted);font-size:12px"></span>
+  <button id="reset" title="Wipe the graph (demo)">Reset</button>
+</header>
+<main>
+  <aside>
+    <h2>Sessions</h2>
+    <ul class="sessions" id="sessions"></ul>
+  </aside>
+  <section id="canvas">
+    <div class="toolbar">
+      <span class="chip" id="title">Pick a session</span>
+      <button id="back" hidden>← whole session</button>
+      <button id="fit">Fit</button>
+    </div>
+    <div id="graph"></div>
+    <div class="empty" id="empty">Select a session on the left. Red nodes are on an alert path.</div>
+    <div class="legend">
+      <span><i style="background:#5aa9ff"></i>process</span>
+      <span><i style="background:#9aa5b1"></i>file</span>
+      <span><i style="background:#b388ff"></i>host</span>
+      <span><i style="background:#3ddc84"></i>mcp tool</span>
+      <span><i style="background:var(--crit)"></i>on alert path</span>
+    </div>
+  </section>
+  <section class="right">
+    <h2>Alerts</h2>
+    <ul class="alerts" id="alerts"></ul>
+    <h2>Selected node</h2>
+    <div class="hint" id="nodehint">Click a node to see its timeline and blast radius.</div>
+    <div class="detail" id="detail" hidden></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const state = { session: null, graph: null, focus: null, net: null, nodes: null, edges: null };
+  const COLORS = { Process: '#5aa9ff', File: '#9aa5b1', Host: '#b388ff', McpTool: '#3ddc84', Session: '#555', Agent: '#555' };
+  const fmt = (ts) => ts ? new Date(ts).toLocaleTimeString() : '';
+
+  function label(n) {
+    const p = n.properties;
+    if (n.labels.includes('Process')) return `${p.name}\n${p.pid}`;
+    if (n.labels.includes('File')) return p.path.split('/').slice(-2).join('/');
+    if (n.labels.includes('Host')) return p.name;
+    if (n.labels.includes('McpTool')) return `${p.server}/${p.name}`;
+    return p.id || p.name || String(n.id);
+  }
+  function shape(n) {
+    if (n.labels.includes('Process')) return 'dot';
+    if (n.labels.includes('Host')) return 'diamond';
+    if (n.labels.includes('McpTool')) return 'hexagon';
+    return 'box';
+  }
+
+  // ---- sessions list -----------------------------------------------------
+  async function loadSessions() {
+    const r = await fetch('/api/sessions'); const list = await r.json();
+    const ul = $('#sessions'); ul.innerHTML = '';
+    let crit = 0, high = 0;
+    for (const s of list) {
+      crit += s.critical; high += s.high;
+      const li = document.createElement('li');
+      li.className = (s.critical ? 'crit' : s.high ? 'high' : '') + (s.id === state.session ? ' active' : '');
+      li.innerHTML = `<span class="id">${s.id}</span>
+        <span class="badge ${s.critical ? 'crit' : s.high ? 'high' : ''}">${s.alerts ? s.alerts + ' alert' + (s.alerts > 1 ? 's' : '') : 'clean'}</span>
+        <span class="agent">${s.agent}</span>
+        <span class="meta">${s.procs} processes · ${s.actions} actions · last ${fmt(s.last)}</span>
+        ${s.top ? `<span class="top">${s.top}</span>` : ''}`;
+      li.onclick = () => selectSession(s.id);
+      ul.appendChild(li);
+    }
+    $('#totals').textContent = `${list.length} sessions · ${crit} critical · ${high} high`;
+  }
+
+  // ---- graph -------------------------------------------------------------
+  function render(nodes, edges, alerts, title) {
+    const onPath = new Set(); const onEdge = new Set();
+    for (const a of alerts) { a.nodes.forEach((id) => onPath.add(id)); a.edges.forEach((id) => onEdge.add(id)); }
+    const vnodes = nodes.map((n) => ({
+      id: n.id, label: label(n), shape: shape(n), size: n.labels.includes('Process') ? 16 : 12,
+      color: onPath.has(n.id)
+        ? { background: '#ff4d4f', border: '#ff9a9b', highlight: { background: '#ff6b6d', border: '#fff' } }
+        : { background: COLORS[n.labels[0]] || '#888', border: '#1c2330', highlight: { background: '#fff', border: '#5aa9ff' } },
+      font: { color: '#e6ebf2', face: 'IBM Plex Mono', size: 11, multi: false },
+      borderWidth: onPath.has(n.id) ? 3 : 1, _raw: n,
+    }));
+    const vedges = edges.map((e) => ({
+      id: e.id, from: e.sourceId, to: e.destinationId, label: e.relationshipType.toLowerCase(),
+      arrows: 'to', font: { color: '#8b97a8', size: 9, align: 'middle', strokeWidth: 0 },
+      color: onEdge.has(e.id) ? { color: '#ff4d4f', highlight: '#ff9a9b' } : { color: e.properties?.allowed === false ? '#f5a623' : '#2a3340', highlight: '#5aa9ff' },
+      width: onEdge.has(e.id) ? 3 : 1, dashes: e.properties?.allowed === false,
+    }));
+    $('#title').innerHTML = title;
+    $('#empty').hidden = true;
+    if (!state.net) {
+      state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
+      state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, {
+        physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -40, springLength: 110 }, stabilization: { iterations: 120 } },
+        interaction: { hover: true }, layout: { improvedLayout: true },
+      });
+      state.net.on('click', (p) => { if (p.nodes.length) selectNode(p.nodes[0]); });
+      state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
+    } else {
+      // Update in place so the layout doesn't jump on every live tick.
+      const have = new Set(state.nodes.getIds());
+      state.nodes.update(vnodes); state.edges.update(vedges);
+      for (const id of have) if (!vnodes.find((n) => n.id === id)) state.nodes.remove(id);
+      for (const id of state.edges.getIds()) if (!vedges.find((e) => e.id === id)) state.edges.remove(id);
+    }
+  }
+
+  async function selectSession(id) {
+    state.session = id; state.focus = null; $('#back').hidden = true;
+    await loadSessions();
+    const r = await fetch(`/api/graph/${encodeURIComponent(id)}`); const gph = await r.json();
+    state.graph = gph;
+    render(gph.nodes, gph.edges, gph.alerts, `session <b>${id}</b> · ${gph.nodes.length} nodes · ${gph.alerts.length} alerts`);
+    renderAlerts(gph.alerts);
+  }
+
+  function renderAlerts(alerts) {
+    const ul = $('#alerts'); ul.innerHTML = '';
+    if (!alerts.length) { ul.innerHTML = '<li style="border-left-color:var(--ok);color:var(--muted)">No alerts in this session.</li>'; return; }
+    for (const a of alerts) {
+      const li = document.createElement('li'); li.className = a.severity;
+      li.innerHTML = `<div class="t">${a.title}</div><div class="s">${a.summary}</div>`;
+      li.onclick = () => { if (state.net) { state.net.selectNodes(a.nodes); state.net.fit({ nodes: a.nodes, animation: true }); } };
+      ul.appendChild(li);
+    }
+  }
+
+  // ---- node focus --------------------------------------------------------
+  async function selectNode(id) {
+    const r = await fetch(`/api/node/${id}`); const d = await r.json();
+    const n = d.node; const p = n.properties;
+    $('#nodehint').hidden = true; const el = $('#detail'); el.hidden = false;
+    const props = Object.entries(p).filter(([k]) => !['key', 'session'].includes(k)).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    const tl = d.timeline.map((t) => `<li class="${t.allowed === false ? 'refused' : ''}"><span class="ts">${fmt(t.ts)}</span><span>${t.outgoing ? '' : '← '}${t.action.toLowerCase()}${t.allowed === false ? ' ✗' : ''}</span><span>${label(t.m)}${t.argv ? ' · ' + t.argv : ''}${t.port ? ':' + t.port : ''}</span></li>`).join('');
+    el.innerHTML = `<div class="kind">${n.labels.join(', ')}</div><div class="name">${label(n).replace('\n', ' · ')}</div>
+      <dl>${props}</dl>
+      <div class="actions"><button id="focusBtn">Show this node's graph</button><button id="radiusBtn">Blast radius (2 hops)</button></div>
+      <h2 style="margin-left:0">Timeline</h2><ul class="tl">${tl || '<li>no actions</li>'}</ul>`;
+    $('#focusBtn').onclick = () => focusNode(id);
+    $('#radiusBtn').onclick = () => { render(d.radius.nodes.concat([n]), d.radius.edges, state.graph?.alerts || [], `blast radius of <b>${label(n).replace('\n', ' ')}</b> · ${d.radius.nodes.length} reachable`); state.focus = id; $('#back').hidden = false; };
+  }
+  async function focusNode(id) {
+    const r = await fetch(`/api/node/${id}?hops=1`); const d = await r.json();
+    render(d.radius.nodes.concat([d.node]), d.radius.edges, state.graph?.alerts || [], `node <b>${label(d.node).replace('\n', ' ')}</b> and its neighbours`);
+    state.focus = id; $('#back').hidden = false;
+  }
+
+  $('#back').onclick = () => selectSession(state.session);
+  $('#fit').onclick = () => state.net && state.net.fit({ animation: true });
+  $('#reset').onclick = async () => { await fetch('/api/reset', { method: 'POST' }); state.session = null; state.graph = null; if (state.net) { state.nodes.clear(); state.edges.clear(); } $('#empty').hidden = false; $('#alerts').innerHTML = ''; loadSessions(); };
+
+  // ---- live --------------------------------------------------------------
+  function connectStream() {
+    const es = new EventSource('/api/stream');
+    es.onopen = () => $('#live').classList.remove('off');
+    es.onerror = () => $('#live').classList.add('off');
+    let pending = null;
+    es.onmessage = (m) => {
+      const msg = JSON.parse(m.data);
+      if (msg.type === 'reset') { loadSessions(); return; }
+      clearTimeout(pending);
+      pending = setTimeout(async () => {
+        await loadSessions();
+        if (msg.session === state.session && !state.focus) await selectSession(state.session);
+      }, 250);
+    };
+  }
+  loadSessions(); connectStream();
+})();
+</script>
+</body>
+</html>

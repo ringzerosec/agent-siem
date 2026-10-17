@@ -1,0 +1,20 @@
+{
+  "name": "graph-watch",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/server.js",
+    "sim": "node src/simulator.js",
+    "dev": "node --watch src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "express": "^5.3.0",
+    "falkordb": "^6.8.0"
+  }
+}
