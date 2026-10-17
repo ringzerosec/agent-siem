@@ -15,6 +15,7 @@
 
 import dns from 'node:dns';
 import { g, gr } from './db.js';
+import { classifyFinding } from './brain.js';
 
 // Shared hosting / CDN ranges: an IP here proves nothing about who runs a site.
 const SHARED = [
@@ -81,6 +82,7 @@ export async function syncFindings(device, alerts) {
     if (a.severity === 'info' || !a.id) continue;
     const sig = `${a.severity}|${a.blocked}|${a.nodes.length}`;
     if (synced.get(a.id) === sig) continue;
+    const first = !synced.has(a.id);
     synced.set(a.id, sig);
     await g().query(
       `MERGE (f:Finding {id: $id})
@@ -90,7 +92,48 @@ export async function syncFindings(device, alerts) {
          AND NOT (n:Host AND coalesce(n.approved, false))
        MERGE (f)-[:INVOLVES]->(n)`,
       { params: { id: a.id, device, rule: a.rule, threat: a.threat, severity: a.severity, blocked: a.blocked ?? null, title: a.title, summary: String(a.summary || '').slice(0, 300), ts: Math.min(...(a.ts?.length ? a.ts : [Date.now()])), nodes: a.nodes } });
+    if (first) {
+      const done = await gr().roQuery('MATCH (f:Finding {id: $id}) RETURN f.technique IS NOT NULL AS has', { params: { id: a.id } });
+      if (!done.data?.[0]?.has) queueClassify({ id: a.id, title: a.title, summary: a.summary, severity: a.severity, blocked: a.blocked, threat: a.threat });
+    }
   }
+}
+
+// ---- the local model over findings (brain/: Vega) ---------------------------------
+// Each new finding gets a technique and a priority from the local decision
+// model, one at a time in the background. Only confident answers become graph
+// links: (:Finding)-[:USES_TECHNIQUE]->(:Technique). Abstentions are stored
+// but never linked.
+const classifyQueue = []; let classifying = false;
+export function queueClassify(f) { classifyQueue.push(f); if (!classifying) drainClassify(); }
+async function drainClassify() {
+  classifying = true;
+  while (classifyQueue.length) {
+    const f = classifyQueue.shift();
+    const r = await classifyFinding(f).catch(() => null);
+    if (!r) { classifyQueue.length = 0; break; }   // model service not running: try again on the next sync
+    await g().query(
+      `MATCH (f:Finding {id: $id})
+       SET f.technique = $t, f.technique_p = $tp, f.technique_abstain = $ta, f.priority = $pr, f.priority_p = $pp, f.priority_abstain = $pa, f.model = $model
+       WITH f WHERE NOT $ta
+       MERGE (t:Technique {name: $t})
+       MERGE (f)-[u:USES_TECHNIQUE]->(t) SET u.p = $tp, u.by = $model`,
+      { params: { id: f.id, t: r.technique || '', tp: r.technique_p ?? 0, ta: r.technique_abstain || !r.technique || /benign/.test(r.technique), pr: r.priority || '', pp: r.priority_p ?? 0, pa: r.priority_abstain, model: r.backend || 'brain' } });
+  }
+  classifying = false;
+}
+
+// Playbooks: the same technique (confident model labels) across endpoints,
+// whether or not they share infrastructure.
+export async function playbooks() {
+  const r = await gr().roQuery(
+    `MATCH (t:Technique)<-[u:USES_TECHNIQUE]-(f:Finding)
+     WITH t, collect(f) AS fs, avg(u.p) AS conf
+     RETURN t.name AS technique, size(fs) AS findings, conf,
+            [x IN fs | x.device] AS devices, [x IN fs WHERE x.blocked = true | x.id] AS blocked,
+            [x IN fs | {id: x.id, device: x.device, title: x.title, summary: x.summary}][0..6] AS sample
+     ORDER BY findings DESC`);
+  return (r.data || []).map((x) => ({ technique: x.technique, findings: x.findings, endpoints: [...new Set(x.devices)], blocked: x.blocked.length, confidence: Number((x.conf || 0).toFixed(2)), sample: x.sample }));
 }
 
 // ---- campaigns (algo.WCC) ---------------------------------------------------------

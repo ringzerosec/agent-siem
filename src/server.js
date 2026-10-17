@@ -21,7 +21,8 @@ import { authMiddleware, siemToken } from './auth.js';
 import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
 import { mountPepper, pepperHeadsUp } from './pepper.js';
-import { syncFindings, campaigns, indicatorIntel, backfillResolution } from './intel.js';
+import { syncFindings, campaigns, indicatorIntel, backfillResolution, playbooks } from './intel.js';
+import { brainHealth } from './brain.js';
 import { aiUsage } from './aiusage.js';
 import { onFinding, onDecision, listDecisions, approveDecision, dismissDecision, setOwners } from './autopilot.js';
 import { startDeepScan, pendingCommands, storeScan, scanStatus, fleetInventory, proposePolicies, iso42001 } from './governance.js';
@@ -249,6 +250,8 @@ app.get('/api/surface/:device', async (req, res, next) => {
 
 // Threat-actor intelligence: campaigns (algo.WCC over findings and shared
 // infrastructure) and everything known about one indicator.
+app.get('/api/playbooks', async (_req, res, next) => { try { res.json(await playbooks()); } catch (e) { next(e); } });
+app.get('/api/brain', async (_req, res) => res.json((await brainHealth()) || { ok: false }));
 app.get('/api/campaigns', async (_req, res, next) => { try { res.json(await campaigns()); } catch (e) { next(e); } });
 app.get('/api/intel/:value', async (req, res, next) => { try { res.json(await indicatorIntel(req.params.value)); } catch (e) { next(e); } });
 
@@ -479,6 +482,10 @@ app.get('/api/graph/device/:id', async (req, res, next) => {
       const src = [...new Set(alerts.flatMap((a) => a.nodes))];
       for (const row of (await gr().roQuery('MATCH (a)-[e]->() WHERE id(a) IN $src AND id(e) IN $ids RETURN e', { params: { src, ids: needE } })).data || []) edges.set(row.e.id, row.e);
     }
+    // The local model's advisory on each finding (technique, priority), when it gave a confident one.
+    const fr = alerts.length ? await gr().roQuery('MATCH (f:Finding) WHERE f.id IN $ids AND f.priority IS NOT NULL RETURN f.id AS id, f.technique AS t, f.technique_abstain AS ta, f.priority AS p, f.priority_p AS pp, f.priority_abstain AS pa, f.model AS m', { params: { ids: alerts.map((a) => a.id) } }) : { data: [] };
+    const byId = new Map((fr.data || []).map((x) => [x.id, x]));
+    for (const a of alerts) { const x = byId.get(a.id); if (x) a.model = { technique: x.ta ? null : x.t, priority: x.pa ? null : x.p, priority_p: x.pp, by: x.m }; }
     res.json({ device: id, nodes: [...nodes.values()], edges: [...edges.values()], alerts, window: { from, to } });
   } catch (e) { next(e); }
 });

@@ -25,6 +25,7 @@ import { g } from './db.js';
 import { parseInstall, lookup } from './osv.js';
 import { linkIp, enrichHost, skillSignature } from './intel.js';
 import { fingerprint, aiApproved, isKnownAgent } from './shadowai.js';
+import { isLlmCall } from './brain.js';
 
 const SENSITIVE = [
   /\/\.env($|\.)/, /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\/\.docker\/config\.json$/,
@@ -271,6 +272,11 @@ export async function ingestEvent(ev) {
          CREATE (p)-[:CONNECTED {ts: $ts, event: $id, allowed: $allowed, port: $port, reason: $reason, path: $path}]->(h)`,
         { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host) || /^(localhost|127\.|10\.|192\.168\.)/.test(host) || /\.(internal|corp|lan)$/.test(host), resolvedAs: approvedAs(host), ts, id: ev.id || '', allowed, port: Number(ev.port) || 443, reason: ev.reason || '', path: String(ev.path || '').slice(0, 200) } },
       );
+      // Below the rule threshold but not nothing: ask the local model (Vega).
+      if (!fp.ai && fp.score >= 2) {
+        const m = await isLlmCall({ host, path: ev.path, accept: ev.accept, content_type: ev.content_type, body_keys: ev.body_keys, req_headers: ev.req_headers, resp_content_type: ev.resp_content_type, resp_keys: ev.resp_keys });
+        if (m && !m.abstain && m.p >= 0.9) Object.assign(fp, { ai: true, confidence: m.p, provider: fp.provider || 'Unknown AI endpoint', signals: [...fp.signals, `local model (${m.backend}): LLM call p=${m.p.toFixed(2)}`] });
+      }
       if (fp.ai) {
         const approvedAi = aiApproved(host, fp.provider);
         await graph.query(

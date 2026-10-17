@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { g, gr } from './db.js';
 import { detectDevice, blastRadius } from './detect.js';
 import * as bus from './bus.js';
-import { campaigns as listCampaignsIntel, indicatorIntel } from './intel.js';
+import { campaigns as listCampaignsIntel, indicatorIntel, playbooks } from './intel.js';
 import { aiUsage } from './aiusage.js';
 
 const text = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 1) }] });
@@ -166,6 +166,12 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
     description: 'Groups of findings across endpoints that share infrastructure (same server IP under different domain names, the same skill on many laptops, the same MCP server), computed with FalkorDB algo.WCC. Each has endpoints, findings, how many were blocked, threats and its indicators. Use for "is this one actor?", "what campaigns are active?".',
     inputSchema: {},
   }, async () => text({ algorithm: 'algo.WCC over Finding, Host, Ip, Skill, SkillSig, McpTool', campaigns: (await listCampaignsIntel()).map(({ finding_ids, devices_findings, component, ...c }) => c) }));
+
+  server.registerTool('list_playbooks', {
+    title: 'Playbooks (local model)',
+    description: 'Findings grouped by attack technique as classified by the local decision model (Vega, running on this machine; confident answers only): the same technique across endpoints even when the infrastructure differs. Complements list_campaigns (shared infrastructure).',
+    inputSchema: {},
+  }, async () => text({ by: 'local decision model (brain/), confident labels only', playbooks: await playbooks() }));
 
   server.registerTool('indicator_intel', {
     title: 'Who else is connected to this?',
@@ -363,7 +369,7 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 }
 
 export const TOOL_KIND = {
-  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
+  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_playbooks: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
   block_host: 'action', contain_session: 'action', approve_decision: 'action', dismiss_decision: 'action', list_decisions: 'read', run_deep_scan: 'action', scan_status: 'read', fleet_inventory: 'read', propose_policies: 'action', iso42001_readiness: 'read', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };

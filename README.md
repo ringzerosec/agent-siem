@@ -160,10 +160,68 @@ claude mcp add --transport http agent-siem http://localhost:8080/mcp \
 
 | Tool | Kind |
 |---|---|
-| `list_alerts`, `get_alert`, `investigate_alert`, `process_timeline`, `blast_radius`, `host_fleet_exposure`, `secret_followups`, `mcp_and_skills`, `run_readonly_cypher` | read-only Cypher |
+| `list_alerts`, `get_alert`, `investigate_alert`, `process_timeline`, `blast_radius`, `host_fleet_exposure`, `secret_followups`, `mcp_and_skills`, `ai_usage`, `indicator_intel`, `fleet_inventory`, `iso42001_readiness`, `list_decisions`, `run_readonly_cypher` | read-only Cypher |
+| `list_campaigns` | graph algorithm (FalkorDB `algo.WCC`) |
+| `list_playbooks` | local decision model (Vega) |
+| `run_deep_scan`, `propose_policies`, `approve_decision`, `dismiss_decision` | fleet actions (proposals need a yes) |
 | `fleet_risk_rank` | graph algorithm (FalkorDB `algo.pageRank`) |
 | `block_host`, `contain_session`, `open_ticket`, `mark_false_positive` | actions (approved hosts are never blocked) |
 | `submit_verdict` | verdict stored on the alert |
+
+## Shadow AI discovery
+
+The **AI usage** view lists every AI service the fleet talks to, recognized by
+**what the traffic says**, not by a hostname list: OpenAI-, Anthropic-, Gemini-,
+Bedrock- and Ollama-style request and response shapes (paths such as
+`/v1/chat/completions`, `/v1/messages`, `:generateContent`; body keys such as
+`model` + `messages`, `max_tokens`, `generationConfig`; headers such as
+`anthropic-version`; streamed `choices`/`delta` responses). That finds OpenRouter,
+LiteLLM and corporate gateways, Groq, DeepSeek, self-hosted models, and scripts
+or notebooks calling AI APIs that nobody registered as an agent
+(`src/shadowai.js`). Requests just below the rule threshold get a second opinion
+from the local decision model. Alerts: data to an unapproved AI service, a
+secret sent to one, and unregistered agents. The daemon change that feeds this
+from real endpoints is specified in `docs/shadow-ai-daemon-spec.md`.
+
+## Autopilot: the proactive loop
+
+A new critical or high finding is investigated on its own (the triage
+playbook, or Claude with `AUTOPILOT_AGENT=claude`; one at a time, capped per
+hour). The result lands in the **Inbox** as a decision with the endpoint's
+owner and the proposed next step, typically an escalation email to the
+employee with their manager in cc. Pepper raises it out loud ("An agent on
+Elena's laptop sent data to DeepSeek. Should I email her?"). Nothing with
+consequences runs without a yes; emails go out through `SMTP_URL` when set and
+are saved as drafts otherwise.
+
+## Governance: deep scan, policies, ISO/IEC 42001
+
+The **Governance** view (or "Pepper, deep scan the fleet") queues a scan on
+every endpoint; the adapter runs the daemon's read-only scanners (skills,
+non-human identities, health, posture, supply chain, its compliance
+self-assessment) and reports back. The fleet inventory shows per endpoint the
+owner, agents, AI services, unregistered agents, MCP servers, skills and
+posture. **Propose policies** turns what was found into decisions in the Inbox
+(block unapproved AI services, remove untrusted MCP servers, quarantine flagged
+skills, register unregistered agents). **ISO/IEC 42001 readiness** maps the
+graph's evidence to Annex A areas A.2 to A.10 with the gaps to close. It is
+evidence for an audit, not a certification.
+
+## The local decision model
+
+`brain/` runs a calibrated decision model on this machine (Vega 0.8B by
+default, Laya as a fallback); nothing is sent to an outside AI provider. It
+labels each finding with an attack technique and a priority (stored only when
+it does not abstain), groups findings into **playbooks** (the same technique
+across endpoints, even with different infrastructure), and gives a second
+opinion on borderline AI traffic. Measured on an M5: about 0.2 to 0.5 s per
+request. Zero-shot pairwise "same actor" linking was not reliable enough, so it
+does not create campaign links; fine-tuning on our own labelled findings is the
+next step.
+
+```bash
+brain/run.sh        # 127.0.0.1:7811; the console uses it when it is running
+```
 
 ## MCP servers and skills
 
