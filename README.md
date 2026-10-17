@@ -10,8 +10,6 @@ analyst clicks any node to see its timeline and blast radius.
 Built for the WeMakeDevs × FalkorDB "Graph Hacks: Context for AI Agents"
 hackathon, Track 01 (Agents That Act on Connected Data: security triage).
 
-![dashboard](docs/screenshot.png)
-
 ## Why a graph
 
 The attacks that matter are multi-step. One event ("python opened `.env`") is

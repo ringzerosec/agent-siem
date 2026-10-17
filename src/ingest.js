@@ -70,10 +70,10 @@ export async function ingestEvent(ev) {
   if (ev.ppid) {
     const pkey = `${session}:${Number(ev.ppid)}`;
     await graph.query(
-      `MATCH (c:Process {key: $key})
+      `MATCH (c:Process {key: $key}), (s:Session {id: $session})
        MERGE (pp:Process {key: $pkey})
          ON CREATE SET pp.pid = $ppid, pp.name = $pname, pp.first_ts = $ts, pp.session = $session
-       MERGE (s:Session {id: $session})-[:HAS]->(pp)
+       MERGE (s)-[:HAS]->(pp)
        MERGE (pp)-[:SPAWNED]->(c)`,
       { params: { key, pkey, ppid: Number(ev.ppid), pname: ev.parent_process || 'parent', ts, session } },
     );

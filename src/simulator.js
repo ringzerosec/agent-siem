@@ -27,7 +27,7 @@ const now = () => Date.now();
 class Session {
   constructor(i) {
     this.id = `sess-${String(i).padStart(2, '0')}`;
-    this.agent = pick(AGENTS);
+    this.agent = AGENTS[(i - 1) % AGENTS.length];
     this.rootPid = 1000 + i * 100;
     this.nextPid = this.rootPid + 1;
     this.step = 0;
