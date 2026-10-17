@@ -137,6 +137,9 @@
   .dec .dt { font-weight: 600; font-size: 13px; flex: 1; }
   .dec .ds { font-size: 12.5px; color: var(--muted-foreground); margin-top: 4px; line-height: 1.45; }
   .dec .mail { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; background: var(--background); }
+  .dec .mail summary { cursor: pointer; color: var(--muted-foreground); }
+  .dec .mail summary b { color: var(--primary); font-weight: 600; }
+  .dec .mail[open] summary { margin-bottom: 6px; }
   .dec .mail pre { margin: 6px 0 0; white-space: pre-wrap; font: 12px var(--sans); color: var(--foreground); max-height: 160px; overflow: auto; }
   .dec .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
   .dec.done { opacity: .6; }
@@ -232,8 +235,15 @@
   .tile { position: relative; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; }
   .tile:hover { border-color: var(--primary); box-shadow: 0 4px 14px rgba(1,105,111,.10); }
   .tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-  .tile.high { border-color: var(--event-pii); }
-  .tile.crit { border-color: var(--destructive); box-shadow: 0 0 0 1px var(--destructive), 0 0 24px rgba(220,38,38,.18); }
+  /* Calmer wall: only critical endpoints get a red frame; high gets a thin
+     amber accent; everything else stays neutral, so the eye lands on the
+     few that matter. */
+  .tile.high { box-shadow: inset 3px 0 0 var(--event-pii), 0 1px 2px rgba(0,0,0,.05); }
+  .tile.crit { border-color: var(--destructive); box-shadow: inset 3px 0 0 var(--destructive), 0 1px 2px rgba(0,0,0,.05); }
+  .tile .iss { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; line-height: 1.35; color: var(--foreground); flex: 1; min-width: 0; }
+  .tile .iss .sevd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--event-pii); }
+  .tile .iss .sevd.critical { background: var(--destructive); }
+  .tile .iss .more { color: var(--muted-foreground); white-space: nowrap; }
   .tile .hd { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 8px; padding: 11px 12px 8px; border-bottom: 1px solid var(--border); background: var(--card); }
   .tile .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
   .tile.high .dot { background: #d97706; box-shadow: 0 0 0 3px rgba(217,119,6,.18); }
@@ -285,7 +295,11 @@
   .chip { background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; font-size: 12px; color: var(--muted-foreground); }
   .chip b { color: var(--foreground); font-family: var(--mono); font-weight: 500; }
   .lanes { position: absolute; top: 52px; left: 16px; right: 16px; display: grid; grid-template-columns: 1fr 1fr 2fr 1fr; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); z-index: 2; pointer-events: none; }
-  .legend { position: absolute; bottom: 12px; left: 16px; display: flex; gap: 12px; font-size: 11px; color: var(--muted-foreground); z-index: 2; flex-wrap: wrap; }
+  .legend { position: absolute; bottom: 12px; left: 16px; font-size: 11px; color: var(--muted-foreground); z-index: 2; max-width: calc(100% - 32px); }
+  .legend summary { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); cursor: pointer; list-style: none; font: 500 12px var(--sans); color: var(--muted-foreground); }
+  .legend summary::-webkit-details-marker { display: none; }
+  .legend[open] summary { margin-bottom: 6px; }
+  .legend .li { display: flex; gap: 8px 12px; flex-wrap: wrap; padding: 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.08); }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
   .side { overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; background: var(--background); }
   .side .card-header { min-height: 44px; padding: 0 12px; }
@@ -342,34 +356,71 @@
   .tl .ts { color: var(--muted-foreground); }
   .node .actions { display: flex; gap: 8px; margin: 8px 0 12px; flex-wrap: wrap; }
   @media (max-width: 1000px) { #detail { grid-template-columns: 1fr; grid-template-rows: 52vh 1fr; } #canvas { border-right: 0; border-bottom: 1px solid var(--border); } }
-  /* Header fits one row at laptop widths */
-  header { gap: 10px !important; flex-wrap: nowrap; }
-  header .brand, header h1, header .sub, header .stats, #range { white-space: nowrap; flex-shrink: 0; }
-  @media (max-width: 1500px) { header .stat { padding: 4px 8px; } header .stat b { font-size: 15px; } .seg button { padding: 0 8px; } #live { display: none; } }
-  @media (max-width: 1300px) { header .stat span { display: none; } }
+  /* App shell (21st "App Dashboard Layout" / shadcn sidebar pattern): a quiet
+     left sidebar for navigation and account, a slim top bar for the page
+     title, the one-line fleet summary and the time range. */
+  body { grid-template-columns: 216px minmax(0, 1fr); grid-template-rows: 56px minmax(0, 1fr); }
+  header { grid-column: 1; grid-row: 1 / 3; flex-direction: column; align-items: stretch; gap: 2px; padding: 14px 10px 12px; border-bottom: 0; border-right: 1px solid var(--border); overflow-y: auto; }
+  header .brand { padding: 2px 8px 16px; }
+  header .ni { width: 16px; height: 16px; flex-shrink: 0; }
+  header #view { flex-direction: column; border: 0; background: transparent; gap: 2px; overflow: visible; border-radius: 0; }
+  header #view button, header > .btn.sm { display: flex; align-items: center; gap: 10px; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; color: var(--muted-foreground); font: 500 13.5px var(--sans); text-align: left; cursor: pointer; }
+  header #view button:hover, header > .btn.sm:hover { background: var(--accent); color: var(--foreground); }
+  header #view button.on { background: var(--teal-light); color: var(--teal); font-weight: 600; }
+  header #inboxCount { margin-left: auto; }
+  header #zeroBtn .zdot { margin: 0 4px; }
+  header .nav-sep { height: 1px; background: var(--border); margin: 10px 6px; }
+  header #roBadge { align-self: flex-start; margin: 0 10px 6px; }
+  #topbar { grid-column: 2; grid-row: 1; display: flex; align-items: center; gap: 12px; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--card); min-width: 0; white-space: nowrap; }
+  #topbar h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; }
+  #topbar .stats { gap: 2px; padding-left: 10px; border-left: 1px solid var(--border); }
+  #topbar .stat { border: 0; background: transparent; padding: 4px 8px; border-radius: 6px; gap: 5px; cursor: pointer; font: inherit; color: inherit; }
+  #topbar .stat:hover:not(:disabled) { background: var(--accent); }
+  #topbar .stat:disabled { cursor: default; }
+  #topbar .stat b { font-size: 14px; }
+  #topbar .stat span { font-size: 12.5px; }
+  #topbar #range button { height: 28px; }
+  body > #wall, body > #campaigns, body > #ai, body > #gov, body > #events { grid-column: 2; grid-row: 2; min-height: 0; min-width: 0; }
+  #detail { inset: 56px 0 0 216px; }
+  @media (max-width: 1180px) { #topbar .stat span { display: none; } #live { display: none; } }
+  @media (max-width: 860px) {
+    body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 52px minmax(0, 1fr); }
+    header { grid-column: 1; grid-row: 1; flex-direction: row; align-items: center; overflow-x: auto; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+    header .brand { padding: 0 8px 0 0; } header .brand .sub, header .nav-sep, header .spacer { display: none; }
+    header #view { flex-direction: row; } header #view button span, header > .btn.sm span:not(.badge):not(.zdot) { display: none; }
+    header #view button, header > .btn.sm { width: auto; }
+    #topbar { grid-column: 1; grid-row: 2; padding: 0 12px; overflow-x: auto; } #topbar .stats { display: none; }
+    body > #wall, body > #campaigns, body > #ai, body > #gov, body > #events { grid-column: 1; grid-row: 3; }
+    #detail { inset: 0; }
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><div class="mark">R0</div><div><h1>Agent SIEM</h1><div class="sub">Ring Zero Security</div></div></div>
-  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button><button data-v="campaigns">Campaigns</button><button data-v="ai">AI usage</button><button data-v="gov">Governance</button></div>
-  <span class="live" id="live"><i></i> live</span>
-  <button class="btn sm" id="back" hidden>← all devices</button>
-  <button class="btn sm" id="inboxBtn" title="Analyses autopilot finished, waiting for your yes">Inbox <span class="badge outline" id="inboxCount">0</span></button>
+  <nav class="seg" id="view" aria-label="Views"><button data-v="wall" class="on"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Wall</span></button><button data-v="events"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Events</span></button><button data-v="campaigns"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.8 7.8 10.6 16M16.2 7.8 13.4 16M8.5 6h7"/></svg><span>Campaigns</span></button><button data-v="ai"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 10h4v4h-4z"/></svg><span>AI usage</span></button><button data-v="gov"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span>Governance</span></button></nav>
+  <div class="nav-sep"></div>
+  <button class="btn sm" id="inboxBtn" title="Analyses autopilot finished, waiting for your yes"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Inbox</span> <span class="badge outline" id="inboxCount">0</span></button>
   <button class="btn sm" id="zeroBtn" title="Pepper, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Pepper</span></button>
-  <span class="badge warning" id="roBadge" hidden title="Signed in with a demo link: you can look at everything and talk to Pepper, but blocking, containing and approving need an admin">Read-only demo</span>
-  <button class="btn sm" id="shareBtn" hidden title="Read-only links for judges, and sign out">Share</button>
   <span class="spacer"></span>
-  <div class="seg" id="range" role="tablist" aria-label="Time range">
-    <button data-r="24h" class="on">24 h</button><button data-r="today">Today</button><button data-r="yday">Yesterday</button><button data-r="7d">7 days</button><button data-r="all">All</button>
-  </div>
+  <span class="badge warning" id="roBadge" hidden title="Signed in with a demo link: you can look at everything and talk to Pepper, but blocking, containing and approving need an admin">Read-only demo</span>
+  <button class="btn sm" id="shareBtn" hidden title="Read-only links for judges, and sign out"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg><span>Share &amp; account</span></button>
+</header>
+<div id="topbar">
+  <button class="btn sm" id="back" hidden>← All endpoints</button>
+  <h2 id="pageTitle">Endpoints</h2>
   <div class="stats">
     <button class="stat" id="statDevices" data-sev="" title="Show every endpoint"><b>0</b><span>endpoints</span></button>
     <button class="stat crit" id="statCrit" data-sev="crit" title="Show endpoints with critical alerts"><b>0</b><span>critical</span></button>
     <button class="stat high" id="statHigh" data-sev="high" title="Show endpoints with high alerts"><b>0</b><span>high</span></button>
     <button class="stat" id="statContained" data-sev="" title="Alert paths stopped by Ring Zero Security" disabled><b>0</b><span>contained</span></button>
   </div>
-</header>
+  <span class="spacer"></span>
+  <span class="live" id="live"><i></i> live</span>
+  <div class="seg" id="range" role="tablist" aria-label="Time range">
+    <button data-r="24h" class="on">24 h</button><button data-r="today">Today</button><button data-r="yday">Yesterday</button><button data-r="7d">7 days</button><button data-r="all">All</button>
+  </div>
+</div>
 
 <div id="wall"><div id="wallEmpty">Waiting for devices…</div></div>
 
@@ -415,10 +466,12 @@
       <button class="btn sm" id="whole" hidden>← whole device</button>
       <button class="btn sm" id="fit">Fit</button>
       <button class="btn sm" id="spotClear" hidden>Show whole graph</button>
-      <button class="btn sm" id="pathsOnly" title="Large endpoints open on alert paths only" aria-pressed="false">Alert paths only</button>
+      <button class="btn sm" id="pathsOnly" title="Endpoints with alerts open on their attack paths" aria-pressed="false">Alert paths only</button>
     </div>
     <div id="graph"></div>
-    <div class="legend">
+    <details class="legend">
+      <summary>Legend</summary>
+      <div class="li">
       <span><i style="background:#01696f"></i>agent</span>
       <span><i style="background:#2b8a92"></i>process</span>
       <span><i style="background:#9aa5b1"></i>file</span>
@@ -427,7 +480,8 @@
       <span><i style="background:#dc2626"></i>unapproved host · vulnerable package · CVE</span>
       <span><i style="background:#16a34a"></i>mcp tool</span><span><i style="background:#d97706"></i>untrusted mcp</span><span><i style="background:#0f766e"></i>skill · <b style="color:#dc2626">flagged</b></span>
       <span><i style="border:3px solid #dc2626;background:transparent;width:8px;height:8px"></i>on alert path</span>
-    </div>
+      </div>
+    </details>
   </section>
   <section class="side">
     <div class="card">
@@ -573,7 +627,10 @@
     }));
     const vedges = edges.map((e) => ({
       id: e.id, from: e.sourceId, to: e.destinationId, label: mini ? undefined : e.relationshipType.toLowerCase(),
-      arrows: mini ? undefined : 'to', font: { color: css('--muted-foreground'), size: 9, align: 'middle', strokeWidth: 3, strokeColor: '#ffffff' },
+      // Edge labels only where they tell the story (the attack path); the rest
+      // show on hover or when a node is selected, so labels do not pile up.
+      arrows: mini ? undefined : 'to', font: { color: css('--muted-foreground'), size: onEdge.has(e.id) ? 10 : 0, align: 'middle', strokeWidth: 3, strokeColor: css('--canvas') },
+      chosen: mini ? false : { edge: true, label: (v) => { v.size = 10; } },
       color: onEdge.has(e.id) ? { color: '#dc2626', highlight: '#dc2626' } : { color: e.properties?.allowed === false ? '#d97706' : edge, highlight: '#01696f' },
       width: onEdge.has(e.id) ? (mini ? 2 : 3) : 1, dashes: e.properties?.allowed === false,
     }));
@@ -644,12 +701,10 @@
       const badge = t.el.querySelector('.badge');
       badge.className = 'badge ' + (d.critical ? 'solid' : d.high ? 'warning' : d.alerts ? 'outline' : 'success');
       badge.textContent = d.alerts ? `${d.alerts} alert${d.alerts > 1 ? 's' : ''}` : 'clean';
-      const chips = Object.entries(d.threats || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<span class="badge ${d.critical ? 'destructive' : d.high ? 'warning' : 'outline'}" title="${esc(THREATS[k] || k)}">${k}${n > 1 ? ' ×' + n : ''}</span>`).join('');
-      t.el.querySelector('.ft').innerHTML = chips || `<div class="spec"><div><b>${d.procs ?? 0}</b><span>processes</span></div><div><b>${d.actions ?? 0}</b><span>actions</span></div><div><b title="${fmt(d.last)}">${ago(d.last)}</b><span>last seen</span></div></div>`;
+      tileFoot(t, d);
       const cls = d.critical ? 'crit' : d.high ? 'high' : '';
       t.el.classList.remove('crit', 'high'); if (cls) t.el.classList.add(cls);
       t.el.classList.toggle('idle', !d.actions);
-      if (!d.actions) t.el.querySelector('.ft').innerHTML = `<span class="dim">idle · no activity in this range${d.alerts ? ' · ' + d.alerts + ' past alert' + (d.alerts > 1 ? 's' : '') : ''}</span>`;
       t.el.classList.toggle('filtered', state.sev === 'crit' ? !d.critical : state.sev === 'high' ? !(d.critical || d.high) : false);
       wall.appendChild(t.el);   // re-append in risk order: critical, high, other alerts, clean; idle last
       if (!onlyDevices || onlyDevices.has(d.id) || t.had === 0) refreshTile(d.id, t, d);
@@ -659,6 +714,18 @@
     $('#statHigh').innerHTML = `<b>${high}</b><span>high</span>`;
     $('#statContained').innerHTML = `<b>${devices.reduce((n, d) => n + (d.contained || 0), 0)}</b><span>contained</span>`;
     if (state.device) renderEndpoint(state.device);
+  }
+  // Tile footer: the worst open issue in plain words (with the threat model
+  // code on hover), or the endpoint's activity when it is clean.
+  function tileFoot(t, d) {
+    const ft = t.el.querySelector('.ft');
+    if (!d.actions) { ft.innerHTML = `<span class="dim">idle · no activity in this range${d.alerts ? ' · ' + d.alerts + ' past alert' + (d.alerts > 1 ? 's' : '') : ''}</span>`; return; }
+    if (d.alerts && t.issue) {
+      const codes = Object.entries(d.threats || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${THREATS[k] || ''}${n > 1 ? ' ×' + n : ''}`).join(', ');
+      ft.innerHTML = `<span class="iss" title="${esc(codes)}"><span class="sevd ${esc(t.issue.severity)}"></span>${esc(t.issue.title)}${t.issue.more > 0 ? ` <span class="more">+${t.issue.more} more</span>` : ''}</span>`;
+      return;
+    }
+    ft.innerHTML = `<div class="spec"><div><b>${d.procs ?? 0}</b><span>processes</span></div><div><b>${d.actions ?? 0}</b><span>actions</span></div><div><b title="${fmt(d.last)}">${ago(d.last)}</b><span>last seen</span></div></div>`;
   }
   // Tile graphs load through a small queue (2 in flight) so the browser's
   // per-host connection pool stays free for the device view and live stream.
@@ -680,7 +747,24 @@
     const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}?cap=200`), { signal: AbortSignal.timeout(12000) })).json();
     t.sig = sig;
     t.el.querySelector('.loading')?.remove();
-    const { vnodes, vedges } = toVis(gph.nodes, gph.edges, gph.alerts.filter((a) => a.severity !== 'info'), true);
+    const al = gph.alerts.filter((a) => a.severity !== 'info');
+    let { vnodes, vedges } = toVis(gph.nodes, gph.edges, al, true);
+    // Thumbnails show the attack paths only (a hairball of 200 dots says
+    // nothing at this size); endpoints with no alert keep their whole graph.
+    // Only the 3 worst paths, and nodes in their own colours with just the
+    // path edges in red: a tile should read as "this is what happened", not
+    // as a red alarm.
+    const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+    if (al.length) {
+      const worst = al.slice().sort((x, y) => (rank[x.severity] ?? 4) - (rank[y.severity] ?? 4) || (y.ts?.length || 0) - (x.ts?.length || 0)).slice(0, 3);
+      const keepN = new Set(worst.flatMap((a) => a.nodes)), keepE = new Set(worst.flatMap((a) => a.edges));
+      const nb = css('--node-border');
+      vnodes = vnodes.filter((n) => keepN.has(n.id)).map((n) => ({ ...n, size: n.size + 6, shadow: false, borderWidth: 1, color: { border: nb, background: nb } }));
+      vedges = vedges.filter((e) => keepE.has(e.id) || (keepN.has(e.from) && keepN.has(e.to)));
+    }
+    const top = al.slice().sort((x, y) => (rank[x.severity] ?? 4) - (rank[y.severity] ?? 4) || (y.ts?.length || 0) - (x.ts?.length || 0))[0];
+    t.issue = top ? { title: top.title, severity: top.severity, more: new Set(al.map((a) => a.title)).size - 1 } : null;
+    const d = state.devices?.get(id); if (d) tileFoot(t, d);
     const have = new Set(t.nodes.getIds());
     t.nodes.update(vnodes); t.edges.update(vedges);
     for (const nid of have) if (!vnodes.find((n) => n.id === nid)) t.nodes.remove(nid);
@@ -719,12 +803,12 @@
   }
   async function openDevice(id, keepFocus) {
     state.device = id; if (!keepFocus) state.focus = null;
-    $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true;
+    $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true; $('#pageTitle').textContent = id;
     let gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
     state.graph = gph;
     // Big endpoints (hundreds of nodes) open on the alert paths only; the
     // button toggles back to everything.
-    if (state.pathsAuto !== false && state.lastDevice !== id) state.pathsOnly = gph.nodes.length > 150 && gph.alerts.length > 0;
+    if (state.pathsAuto !== false && state.lastDevice !== id) state.pathsOnly = gph.alerts.some((a) => a.severity !== 'info');   // open on the attack paths; "Show everything" is one click
     state.lastDevice = id;
     $('#pathsOnly').setAttribute('aria-pressed', String(!!state.pathsOnly)); $('#pathsOnly').classList.toggle('on', !!state.pathsOnly);
     $('#pathsOnly').textContent = state.pathsOnly ? 'Show everything' : 'Alert paths only';
@@ -1065,7 +1149,7 @@
   function closeDevice() {
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
     state.device = null; state.focus = null; state.graph = null;
-    $('#detail').hidden = true; $('#back').hidden = true;
+    $('#detail').hidden = true; $('#back').hidden = true; $('#pageTitle').textContent = TITLES[view] || '';
     if (state.net) { state.net.destroy(); state.net = null; }
     $('#nodeDetail').hidden = true; $('#nodehint').hidden = false;
     if (view === 'wall') refitTiles();
@@ -1159,8 +1243,10 @@
   // ---- SIEM events view ---------------------------------------------------
   let view = 'wall';
   $('#view').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; setView(b.dataset.v); };
+  const TITLES = { wall: 'Endpoints', events: 'Events', campaigns: 'Campaigns', ai: 'AI usage', gov: 'Governance' };
   function setView(v) {
     view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
+    $('#pageTitle').textContent = TITLES[v] || '';
     if (v === 'events' && state.device) closeDevice();
     if ((v === 'campaigns' || v === 'ai' || v === 'gov') && state.device) closeDevice();
     $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai'; $('#gov').hidden = v !== 'gov';
@@ -1205,7 +1291,7 @@
       return `<div class="dec ${d.status === 'pending' ? '' : 'done'}" data-id="${esc(d.id)}">
         <div class="dh">${sev(d.severity)}<span class="dt">${esc(d.headline)}</span><span class="dim" style="font-size:11px">${ago(d.ts)}</span></div>
         <div class="ds">${esc(d.verdict_summary || d.summary)}</div>
-        ${mail ? `<div class="mail"><b>${d.status === 'pending' ? 'Proposed email' : 'Email'}</b> to ${esc(mail.args.to)}${mail.args.cc ? ' · cc ' + esc(mail.args.cc) : ''}<br><span class="dim">${esc(mail.args.subject)}</span><pre>${esc(mail.args.body)}</pre></div>` : ''}
+        ${mail ? `<details class="mail"><summary><b>${d.status === 'pending' ? 'Preview email' : 'Email'}</b> to ${esc(mail.args.to)}</summary>${mail.args.cc ? '<span class="dim">cc ' + esc(mail.args.cc) + '</span><br>' : ''}<span class="dim">${esc(mail.args.subject)}</span><pre>${esc(mail.args.body)}</pre></details>` : ''}
         <div class="acts">${d.status === 'pending'
           ? d.proposals.map((p) => `<button class="btn sm primary" data-approve="${esc(p.type)}">${esc(p.label)}</button>`).join('') + `<button class="btn sm" data-dismiss>Dismiss</button><button class="btn sm" data-open>Open endpoint</button>`
           : `<span class="badge outline">${esc(d.status)}</span> ${(d.results || []).map((r) => `<span class="dim" style="font-size:11.5px">${esc(r.type.replace(/_/g, ' '))}: ${esc(r.status || (r.ok ? 'done' : 'failed'))}</span>`).join(' ')}`}</div></div>`;
