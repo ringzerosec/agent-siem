@@ -317,16 +317,16 @@
   // Force layout, settled once and then frozen: the picture organises itself
   // but never jiggles. New nodes get a short settle, then freeze again.
   const FORCE = (mini) => ({
-    physics: { enabled: true, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: mini ? -14 : -45, springLength: mini ? 36 : 120, centralGravity: mini ? 0.03 : 0.01, damping: 0.6 }, stabilization: { enabled: true, iterations: mini ? 150 : 250, updateInterval: 50 }, minVelocity: 0.75 },
+    physics: { enabled: false, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: mini ? -14 : -45, springLength: mini ? 36 : 120, centralGravity: mini ? 0.03 : 0.01, damping: 0.6 }, stabilization: { enabled: false }, minVelocity: 0.75 },
     layout: { improvedLayout: !mini, randomSeed: 7 },
     edges: { smooth: { type: 'continuous', roundness: 0.3 } },
   });
-  function freezeAfterSettle(net) {
-    net.once('stabilizationIterationsDone', () => { net.setOptions({ physics: false }); net.fit({ animation: false }); });
-  }
+  // Run the physics for a bounded number of iterations, then freeze and fit.
+  // Networks are created with physics off and only ever settle through here,
+  // so an empty network can never "finish" stabilising before it has nodes.
   function settle(net, iterations) {
     net.setOptions({ physics: { enabled: true } });
-    net.once('stabilizationIterationsDone', () => net.setOptions({ physics: false }));
+    net.once('stabilized', () => { net.setOptions({ physics: { enabled: false } }); net.fit({ animation: false }); });
     net.stabilize(iterations);
   }
 
@@ -348,7 +348,6 @@
         wall.appendChild(el);
         const nodes = new vis.DataSet([]), edges = new vis.DataSet([]);
         const net = new vis.Network(el.querySelector('.net'), { nodes, edges }, { ...FORCE(true), interaction: { dragNodes: false, dragView: false, zoomView: false, selectable: false, hover: false } });
-        freezeAfterSettle(net);
         t = { el, net, nodes, edges, had: 0 };
         state.tiles.set(d.id, t);
       }
@@ -382,7 +381,7 @@
     const have = new Set(t.nodes.getIds());
     t.nodes.update(vnodes); t.edges.update(vedges);
     for (const nid of have) if (!vnodes.find((n) => n.id === nid)) t.nodes.remove(nid);
-    if (vnodes.length !== t.had) { t.had = vnodes.length; settle(t.net, 40); setTimeout(() => t.net.fit({ animation: false }), 300); }
+    if (vnodes.length !== t.had) { t.had = vnodes.length; settle(t.net, 120); }
   }
 
   // ---- device detail ----------------------------------------------------
@@ -392,7 +391,7 @@
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
-      freezeAfterSettle(state.net);
+      settle(state.net, 300);
       state.net.on('click', (p) => { if (p.nodes.length) selectNode(p.nodes[0]); });
       state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
     } else {
@@ -401,7 +400,7 @@
       state.nodes.update(vnodes); state.edges.update(vedges);
       for (const id of have) if (!vnodes.find((n) => n.id === id)) state.nodes.remove(id);
       for (const id of state.edges.getIds()) if (!vedges.find((e) => e.id === id)) state.edges.remove(id);
-      if (grew) settle(state.net, 60);
+      if (grew) settle(state.net, 80);
     }
   }
   async function openDevice(id, keepFocus) {
