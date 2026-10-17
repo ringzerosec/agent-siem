@@ -89,6 +89,7 @@ function mapEvent(ev, device, owner, session) {
 
 const seen = new Map();  // device → Set of event ids already sent
 const sentNotes = new Map(); // session → last commentary seq
+const lastInv = new Map();   // device → last inventory sent (only resend on change)
 
 async function pollDevice(t) {
   headers = headersFor(t.device);
@@ -101,7 +102,8 @@ async function pollDevice(t) {
   try {
     const inv = await get(`${t.url}/api/v1/discovery/inventory`);
     const servers = (inv.mcp_servers || []).map((m) => ({ device: t.device, name: m.name, agent: m.agent, transport: m.transport, url: m.url, command: m.command, scope: m.scope, held: m.held ?? m.status === 'held' }));
-    if (servers.length) await post('/api/mcp-servers', servers);
+    const sig = JSON.stringify(servers);
+    if (servers.length && lastInv.get(t.device) !== sig) { await post('/api/mcp-servers', servers); lastInv.set(t.device, sig); }
   } catch (e) { if (!/404/.test(e.message)) console.error(`${t.device}: inventory: ${e.message}`); }
 
   let sessions = [];

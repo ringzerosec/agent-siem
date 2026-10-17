@@ -44,6 +44,8 @@ async function ensureIndexes() {
     'CREATE INDEX FOR (h:Host) ON (h.name)',
     'CREATE INDEX FOR (t:McpTool) ON (t.name)',
     'CREATE INDEX FOR (a:Agent) ON (a.name)',
+    'CREATE INDEX FOR (d:Device) ON (d.id)',
+    'CREATE INDEX FOR (m:McpServer) ON (m.name)',
   ];
   for (const s of stmts) {
     try { await graph.query(s); } catch (e) { if (!/already indexed/i.test(e.message)) throw e; }

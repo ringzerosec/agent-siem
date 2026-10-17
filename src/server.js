@@ -57,14 +57,9 @@ function broadcast(msg) {
   for (const res of clients) res.write(line);
 }
 
-app.get('/api/stream', (req, res) => {
-  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-  res.flushHeaders();
-  res.write(': connected\n\n');
-  clients.add(res);
-  const ping = setInterval(() => res.write(': ping\n\n'), 15000);
-  req.on('close', () => { clearInterval(ping); clients.delete(res); });
-});
+// Retired: live updates are polled from /api/changes. 204 tells any old tab's
+// EventSource to stop reconnecting, so it releases its connection slot.
+app.get('/api/stream', (_req, res) => res.status(204).end());
 
 // Detection runs off the request path, at most once every 10 s per session,
 // so a busy session cannot saturate the database with rule queries.

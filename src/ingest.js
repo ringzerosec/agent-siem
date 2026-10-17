@@ -252,12 +252,7 @@ export async function ingestMcpServers(servers) {
        MERGE (d)-[:DECLARES]->(s)`,
       { params: { device: String(m.device), name: m.name, agent: m.agent || '', transport: m.transport || '', url: m.url || '', command: redact(m.command || ''), scope: m.scope || '', held: !!m.held, approved: isApprovedMcp(m.name, m.url) } },
     );
-    // link tools already seen for this server
-    await graph.query(
-      `MATCH (s:McpServer {name: $name, device: $device}), (t:McpTool {server: $name})
-       MERGE (s)-[:PROVIDES]->(t)`,
-      { params: { name: m.name, device: String(m.device) } },
-    );
+
   }
 }
 const APPROVED_MCP = new Set((process.env.APPROVED_MCP || 'filesystem,github,postgres').split(',').map((s) => s.trim()).filter(Boolean));
