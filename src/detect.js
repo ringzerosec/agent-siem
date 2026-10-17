@@ -222,6 +222,7 @@ export async function detect(session, win) {
       }
       if (win) {
         const ts = [...(row.pr || []), ...Object.values(row).filter((v) => v && typeof v === 'object' && 'relationshipType' in v)].map((e) => e.properties?.ts).filter(Boolean);
+        if (!ts.length && row.s?.properties?.started) ts.push(row.s.properties.started);   // session-level findings date from the session start
         if (ts.length && !ts.some((t) => t >= win.from && t <= win.to)) continue;
       }
       alerts.push({
