@@ -339,7 +339,7 @@
     }));
     const vedges = edges.map((e) => ({
       id: e.id, from: e.sourceId, to: e.destinationId, label: mini ? undefined : e.relationshipType.toLowerCase(),
-      arrows: mini ? undefined : 'to', font: { color: css('--muted-foreground'), size: 9, align: 'middle', strokeWidth: 0 },
+      arrows: mini ? undefined : 'to', font: { color: css('--muted-foreground'), size: 9, align: 'middle', strokeWidth: 3, strokeColor: '#ffffff' },
       color: onEdge.has(e.id) ? { color: '#dc2626', highlight: '#dc2626' } : { color: e.properties?.allowed === false ? '#d97706' : edge, highlight: '#01696f' },
       width: onEdge.has(e.id) ? (mini ? 2 : 3) : 1, dashes: e.properties?.allowed === false,
     }));
@@ -348,17 +348,17 @@
   // Force layout, settled once and then frozen: the picture organises itself
   // but never jiggles. New nodes get a short settle, then freeze again.
   const FORCE = (mini) => ({
-    physics: { enabled: false, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: mini ? -14 : -45, springLength: mini ? 36 : 120, centralGravity: mini ? 0.03 : 0.01, damping: 0.6 }, stabilization: { enabled: false }, minVelocity: 0.75 },
+    physics: { enabled: false, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: mini ? -14 : -160, springLength: mini ? 36 : 190, springConstant: mini ? 0.08 : 0.05, centralGravity: mini ? 0.03 : 0.006, damping: 0.6, avoidOverlap: mini ? 0 : 1 }, stabilization: { enabled: false }, minVelocity: 0.75 },
     layout: { improvedLayout: !mini, randomSeed: 7 },
     edges: { smooth: { type: 'continuous', roundness: 0.3 } },
   });
   // Run the physics for a bounded number of iterations, then freeze and fit.
   // Networks are created with physics off and only ever settle through here,
   // so an empty network can never "finish" stabilising before it has nodes.
-  function settle(net, ms) {
+  function settle(net, ms, fit = true) {
     net.setOptions({ physics: { enabled: true } });
     clearTimeout(net.__settle);
-    net.__settle = setTimeout(() => { net.setOptions({ physics: { enabled: false } }); net.fit({ animation: false }); }, ms);
+    net.__settle = setTimeout(() => { net.setOptions({ physics: { enabled: false } }); if (fit) net.fit({ animation: false }); }, ms);
   }
 
   // ---- the wall ---------------------------------------------------------
@@ -436,7 +436,11 @@
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
-      settle(state.net, 1500);
+      settle(state.net, 2500);
+      // Dragging a node turns the springs on, so its neighbours follow it;
+      // on release the graph settles briefly and freezes again (no refit).
+      state.net.on('dragStart', (p) => { if (p.nodes.length) { clearTimeout(state.net.__settle); state.net.setOptions({ physics: { enabled: true } }); } });
+      state.net.on('dragEnd', (p) => { if (p.nodes.length) settle(state.net, 1200, false); });
       state.net.on('click', (p) => { if (p.nodes.length) selectNode(p.nodes[0]); });
       state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
     } else {

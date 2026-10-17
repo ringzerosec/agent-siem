@@ -208,17 +208,22 @@ function nodeId(n) { return n.id; }
 // are cached per session and recomputed only when that session ingests new
 // events (see invalidate). Reads from the wall never touch the rules.
 const cache = new Map();   // session -> alerts (unwindowed)
-export function invalidate(session) { cache.delete(session); }
+export function invalidate(session) { /* keep serving the old result until the job replaces it */ }
+export function hasCache(session) { return cache.has(session); }
 export function CACHE_KEYS() { return cache.keys(); }
 
 // `win` = {from, to} in ms: keep an alert only if some edge on its path
 // happened inside the window.
-export async function detect(session, win) {
+// cachedOnly: page reads never trigger rule queries; a session not yet
+// evaluated shows no alerts until the background job reaches it.
+export async function detect(session, win, { cachedOnly = false } = {}) {
   let all = cache.get(session);
-  if (!all) { all = await detectUncached(session); cache.set(session, all); }
+  if (!all) { if (cachedOnly) return []; all = await detectUncached(session); cache.set(session, all); }
   if (!win) return all;
   return all.filter((a) => !a.ts.length || a.ts.some((t) => t >= win.from && t <= win.to));
 }
+
+export async function recompute(session) { const all = await detectUncached(session); cache.set(session, all); return all; }
 
 async function detectUncached(session) {
   const graph = g();
@@ -275,7 +280,7 @@ export async function detectDevice(deviceId, win) {
   const graph = gr();
   const r = await graph.roQuery('MATCH (d:Device {id: $id})-[:RUNS]->(s:Session) RETURN s.id AS id', { params: { id: deviceId } });
   const out = [];
-  for (const row of r.data || []) for (const a of await detect(row.id, win)) out.push({ session: row.id, ...a });
+  for (const row of r.data || []) for (const a of await detect(row.id, win, { cachedOnly: true })) out.push({ session: row.id, ...a });
   const order = { critical: 0, high: 1, medium: 2 };
   out.sort((a, b) => order[a.severity] - order[b.severity]);
   return out;

@@ -8,6 +8,7 @@
 //   GET  /api/node/:id          one node's details, timeline and 2-hop blast radius
 //   GET  /api/alerts            all alerts across sessions, newest first
 //   GET  /api/stream            server-sent events: {session} after each ingest
+//   GET  /api/bus               ingest mode and JetStream backlog (NATS_URL)
 //   POST /api/reset             wipe the graph (demo convenience)
 
 import express from 'express';
@@ -15,7 +16,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, g, gr, wipe } from './db.js';
 import { ingestMany, ingestMcpServers, ingestNotes } from './ingest.js';
-import { detect, detectDevice, blastRadius, invalidate, THREATS } from './detect.js';
+import * as bus from './bus.js';
+import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
@@ -23,7 +25,7 @@ const PORT = Number(process.env.PORT || 8080);
 const app = express();
 // A slow graph query must never pin a browser connection: answer 503 after
 // 10 s so the client can retry, and recycle idle keep-alive sockets quickly.
-app.use((req, res, next) => { res.setTimeout(10000, () => { if (!res.headersSent) res.status(503).json({ error: 'timeout' }); }); next(); });
+app.use((req, res, next) => { res.setTimeout(10000, () => { if (!res.headersSent) { res.status(503).json({ error: 'timeout' }); } }); next(); });
 // In-flight request table, for diagnosing stalls: GET /api/_inflight
 const inflight = new Map(); let reqSeq = 0;
 app.use((req, res, next) => { const id = ++reqSeq; inflight.set(id, { path: req.originalUrl.slice(0, 80), at: Date.now() }); res.on('close', () => inflight.delete(id)); next(); });
@@ -61,48 +63,70 @@ function broadcast(msg) {
 // EventSource to stop reconnecting, so it releases its connection slot.
 app.get('/api/stream', (_req, res) => res.status(204).end());
 
-// Detection runs off the request path, at most once every 10 s per session,
-// so a busy session cannot saturate the database with rule queries.
-const pendingDetect = new Map();
-function scheduleDetect(session) {
-  if (pendingDetect.has(session)) return;
-  pendingDetect.set(session, setTimeout(async () => {
-    pendingDetect.delete(session);
-    try {
-      invalidate(session);
-      const alerts = await detect(session);
-      const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session } });
-      broadcast({ type: 'update', device: dr.data?.[0]?.id, session, alerts: alerts.length, critical: alerts.filter((a) => a.severity === 'critical').length });
-    } catch (e) { console.error('detect', session, e.message); }
-  }, 10000));
-}
+// Detection runs off the request path, one session at a time, each session
+// at most once every 10 s. Page reads only ever see cached results, so rule
+// queries can never queue a page load.
+const dirtySessions = new Set(); const lastRun = new Map(); let detectBusy = false;
+function scheduleDetect(session) { dirtySessions.add(session); }
+setInterval(async () => {
+  if (detectBusy || !dirtySessions.size) return;
+  const now = Date.now();
+  const next = [...dirtySessions].find((s) => now - (lastRun.get(s) || 0) >= 10000);
+  if (!next) return;
+  dirtySessions.delete(next); lastRun.set(next, now); detectBusy = true;
+  try {
+    const alerts = await recompute(next);
+    const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session: next } });
+    broadcast({ type: 'update', device: dr.data?.[0]?.id, session: next, alerts: alerts.length });
+  } catch (e) { console.error('detect', next, e.message); }
+  finally { detectBusy = false; }
+}, 250);
 
 // --- ingest --------------------------------------------------------------
+// With NATS_URL set, POSTs are published to JetStream and answered 202 once
+// stored; the graph writer below drains the stream in batches. Without it,
+// POSTs write straight to the graph (single-process demo mode).
+async function writeEvents(events) {
+  const sessions = await ingestMany(events);
+  for (const session of sessions) scheduleDetect(session);
+  return sessions;
+}
+async function writeMcp(servers) {
+  await ingestMcpServers(servers);
+  for (const d of new Set(servers.map((m) => String(m.device)))) broadcast({ type: 'update', device: d });
+}
+async function writeNotes(notes) {
+  await ingestNotes(notes);
+  for (const d of new Set(notes.map((n) => String(n.device)))) broadcast({ type: 'note', device: d });
+}
+const asArray = (b) => (Array.isArray(b) ? b : [b]);
+
 app.post('/api/events', async (req, res, next) => {
   try {
-    const events = Array.isArray(req.body) ? req.body : [req.body];
-    const sessions = await ingestMany(events);
-    res.json({ ingested: events.length, sessions });
-    for (const session of sessions) scheduleDetect(session);
+    const events = asArray(req.body);
+    if (bus.enabled()) { await bus.publishEvents(events); return res.status(202).json({ queued: events.length }); }
+    res.json({ ingested: events.length, sessions: await writeEvents(events) });
   } catch (e) { next(e); }
 });
 
 app.post('/api/mcp-servers', async (req, res, next) => {
   try {
-    const servers = Array.isArray(req.body) ? req.body : [req.body];
-    await ingestMcpServers(servers);
-    for (const d of new Set(servers.map((m) => String(m.device)))) broadcast({ type: 'update', device: d });
-    res.json({ ingested: servers.length });
+    const servers = asArray(req.body);
+    if (bus.enabled()) { await bus.publishArray('mcp', servers); return res.status(202).json({ queued: servers.length }); }
+    await writeMcp(servers); res.json({ ingested: servers.length });
   } catch (e) { next(e); }
 });
 
 app.post('/api/notes', async (req, res, next) => {
   try {
-    const notes = Array.isArray(req.body) ? req.body : [req.body];
-    await ingestNotes(notes);
-    for (const d of new Set(notes.map((n) => String(n.device)))) broadcast({ type: 'note', device: d });
-    res.json({ ingested: notes.length });
+    const notes = asArray(req.body);
+    if (bus.enabled()) { await bus.publishArray('notes', notes); return res.status(202).json({ queued: notes.length }); }
+    await writeNotes(notes); res.json({ ingested: notes.length });
   } catch (e) { next(e); }
+});
+
+app.get('/api/bus', async (_req, res, next) => {
+  try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }
 });
 
 // Live session feed: prompts and the daemon's narrative, newest last.
@@ -276,7 +300,7 @@ app.get('/api/sessions', async (_req, res, next) => {
     );
     const out = [];
     for (const row of r.data || []) {
-      const alerts = await detect(row.id);
+      const alerts = await detect(row.id, undefined, { cachedOnly: true });
       out.push({
         ...row,
         alerts: alerts.length,
@@ -305,7 +329,7 @@ app.get('/api/graph/:session', async (req, res, next) => {
       if (row.m) nodes.set(row.m.id, row.m);
       if (row.e) edges.set(row.e.id, row.e);
     }
-    const alerts = await detect(session);
+    const alerts = await detect(session, undefined, { cachedOnly: true });
     res.json({ session, nodes: [...nodes.values()], edges: [...edges.values()], alerts });
   } catch (e) { next(e); }
 });
@@ -334,17 +358,19 @@ app.get('/api/alerts', async (_req, res, next) => {
     const r = await g().roQuery('MATCH (s:Session) RETURN s.id AS id');
     const all = [];
     for (const row of r.data || []) {
-      for (const a of await detect(row.id)) all.push({ session: row.id, ...a });
+      for (const a of await detect(row.id, undefined, { cachedOnly: true })) all.push({ session: row.id, ...a });
     }
     res.json(all);
   } catch (e) { next(e); }
 });
 
 app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(500).json({ error: err.message });
+  console.error(err.message);
+  if (!res.headersSent) res.status(500).json({ error: err.message });
 });
 
 await connect();
+if (await bus.start()) bus.consume({ onEvents: writeEvents, onMcp: writeMcp, onNotes: writeNotes });
+{ const r = await g().roQuery('MATCH (s:Session) RETURN s.id AS id'); for (const row of r.data || []) scheduleDetect(row.id); }
 const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}`));
 srv.keepAliveTimeout = 5000; srv.headersTimeout = 11000;

@@ -162,6 +162,32 @@ npm start            # http://localhost:8080
 npm run sim          # in another terminal
 ```
 
+## Event pipeline: NATS JetStream
+
+```
+RZS daemons ─┐                          ┌─ graph-writer (durable consumer) ─▶ FalkorDB
+simulator  ──┼─▶ POST /api/events ─▶ JetStream stream RZS (rzs.>) ─┤
+any agent  ──┘     202 once stored      ├─ (next) CEF / Splunk forwarder
+                                        └─ (next) archive, detection workers
+```
+
+With `NATS_URL` set, every POST is published to JetStream and answered `202`
+as soon as it is stored. A durable pull consumer, `graph-writer`, fetches up to
+`NATS_BATCH` (200) messages at a time, writes them to the graph and acks them.
+If the writer or FalkorDB restarts, unacked messages are redelivered, so no
+event is lost. Each event carries its id as `Nats-Msg-Id`, so a daemon that
+resends after a restart does not create duplicates within ten minutes. The
+stream keeps a week of events, so a new consumer can replay history.
+
+Subjects are `rzs.events.<device>`, `rzs.mcp.<device>` and `rzs.notes.<device>`.
+`GET /api/bus` shows the mode and the backlog. Without `NATS_URL`, POSTs write
+straight to the graph, which is fine for a single laptop.
+
+```bash
+docker run -d --name nats -p 4222:4222 -p 8222:8222 nats:2.10-alpine -js -sd /data -m 8222
+NATS_URL=nats://localhost:4222 npm start
+```
+
 ## Feed it real events
 
 `POST /api/events` takes a JSON array:
@@ -197,7 +223,8 @@ your allowlist.
 | `GET /api/graph/:session` | nodes, edges and alerts for one session |
 | `GET /api/node/:id?hops=2` | node properties, timeline, blast radius |
 | `GET /api/alerts` | all alerts across sessions |
-| `GET /api/stream` | server-sent events, one message per ingest |
+| `GET /api/changes?since=` | change log the dashboard polls for live updates |
+| `GET /api/bus` | ingest mode and JetStream backlog |
 | `POST /api/reset` | wipe the graph |
 
 ## Also a benchmark monitor
@@ -210,8 +237,8 @@ edges on it are the evidence.
 
 ## Stack
 
-Node 24, Express 5, `falkordb` 6.8 (the official Node client), vis-network for
-the canvas. No build step. Apache-2.0.
+Node 24, Express 5, `falkordb` 6.8 (the official Node client), NATS JetStream
+(`nats` 2.29) for the event pipeline, vis-network for the canvas. No build step. Apache-2.0.
 
 ## Built with
 

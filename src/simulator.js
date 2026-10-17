@@ -12,7 +12,7 @@
 
 const API = process.env.API || 'http://localhost:8080';
 const DEVICES = Number(process.env.SIM_DEVICES || 12);
-const RATE = Number(process.env.SIM_RATE_MS || 1500);
+const RATE = Number(process.env.SIM_RATE_MS || 3000);
 const SESSION_LEN = Number(process.env.SIM_SESSION_LEN || 120);   // actions per session before the agent run ends and a new one starts
 
 const AGENTS = ['claude-code', 'cursor-agent', 'codex', 'gemini-cli'];
