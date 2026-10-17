@@ -11,13 +11,17 @@ const HOST = process.env.FALKORDB_HOST || 'localhost';
 const PORT = Number(process.env.FALKORDB_PORT || 6379);
 const GRAPH = process.env.FALKORDB_GRAPH || 'agentwatch';
 
-let db;
-let graph;
+let db, dbRead;
+let graph, graphRead;
 
+// Two connections: writes and detection go through one, dashboard reads
+// through the other, so a burst of rule queries never queues a page load.
 export async function connect() {
   if (graph) return graph;
   db = await FalkorDB.connect({ host: HOST, port: PORT });
+  dbRead = await FalkorDB.connect({ host: HOST, port: PORT });
   graph = db.selectGraph(GRAPH);
+  graphRead = dbRead.selectGraph(GRAPH);
   await ensureIndexes();
   return graph;
 }
@@ -25,6 +29,10 @@ export async function connect() {
 export function g() {
   if (!graph) throw new Error('db not connected');
   return graph;
+}
+export function gr() {
+  if (!graphRead) throw new Error('db not connected');
+  return graphRead;
 }
 
 // Indexes make the MERGE-heavy ingest and the per-session queries cheap.
@@ -48,5 +56,6 @@ export async function wipe() {
 
 export async function close() {
   if (db) await db.close();
-  db = undefined; graph = undefined;
+  if (dbRead) await dbRead.close();
+  db = dbRead = undefined; graph = graphRead = undefined;
 }

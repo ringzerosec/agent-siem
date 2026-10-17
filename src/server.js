@@ -13,7 +13,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { connect, g, wipe } from './db.js';
+import { connect, g, gr, wipe } from './db.js';
 import { ingestMany, ingestMcpServers, ingestNotes } from './ingest.js';
 import { detect, detectDevice, blastRadius, invalidate, THREATS } from './detect.js';
 
@@ -52,7 +52,7 @@ app.get('/api/stream', (req, res) => {
   req.on('close', () => { clearInterval(ping); clients.delete(res); });
 });
 
-// Detection runs off the request path, at most once every 3 s per session,
+// Detection runs off the request path, at most once every 10 s per session,
 // so a busy session cannot saturate the database with rule queries.
 const pendingDetect = new Map();
 function scheduleDetect(session) {
@@ -65,7 +65,7 @@ function scheduleDetect(session) {
       const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session } });
       broadcast({ type: 'update', device: dr.data?.[0]?.id, session, alerts: alerts.length, critical: alerts.filter((a) => a.severity === 'critical').length });
     } catch (e) { console.error('detect', session, e.message); }
-  }, 3000));
+  }, 10000));
 }
 
 // --- ingest --------------------------------------------------------------
@@ -100,7 +100,7 @@ app.post('/api/notes', async (req, res, next) => {
 app.get('/api/feed/:device', async (req, res, next) => {
   try {
     const id = req.params.device;
-    const r = await g().roQuery(
+    const r = await gr().roQuery(
       `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)
        OPTIONAL MATCH (s)-[:HAS]->(p:Process)-[:PROMPTED]->(q:Prompt)
        OPTIONAL MATCH (s)-[:NOTED]->(n:Note)
@@ -130,7 +130,7 @@ app.get('/api/events', async (req, res, next) => {
     const { from, to } = windowOf(req.query);
     const limit = Math.min(Number(req.query.limit || 500), 5000);
     const kinds = req.query.kind ? String(req.query.kind).split(',') : null;
-    const r = await g().roQuery(
+    const r = await gr().roQuery(
       `MATCH (d:Device)-[:RUNS]->(s:Session)-[:HAS]->(p:Process)-[e]->(m)
        WHERE e.ts >= $from AND e.ts <= $to AND NOT m:Session
          AND ($device IS NULL OR d.id = $device)
@@ -163,7 +163,7 @@ app.get('/api/events', async (req, res, next) => {
 // Distinct filter values for the SIEM filter bar.
 app.get('/api/facets', async (_req, res, next) => {
   try {
-    const r = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session) RETURN collect(DISTINCT d.id) AS devices, collect(DISTINCT s.agent) AS agents');
+    const r = await gr().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session) RETURN collect(DISTINCT d.id) AS devices, collect(DISTINCT s.agent) AS agents');
     res.json({ devices: r.data?.[0]?.devices || [], agents: r.data?.[0]?.agents || [], actions: ['READ', 'WROTE', 'DELETED', 'EXECUTED', 'CONNECTED', 'SENT', 'RESOLVED', 'USED_TOOL', 'INSTALLED', 'TAMPERED'] });
   } catch (e) { next(e); }
 });
@@ -196,7 +196,7 @@ app.post('/api/reset', async (_req, res, next) => {
 app.get('/api/devices', async (req, res, next) => {
   try {
     const { from, to } = windowOf(req.query);
-    const r = await g().roQuery(
+    const r = await gr().roQuery(
       `MATCH (d:Device)
        OPTIONAL MATCH (d)-[:RUNS]->(s:Session)
        OPTIONAL MATCH (s)-[:HAS]->(p:Process)
@@ -233,7 +233,7 @@ app.get('/api/graph/device/:id', async (req, res, next) => {
     const id = req.params.id;
     const { from, to } = windowOf(req.query);
     const cap = Math.min(Number(req.query.cap || 600), 3000);
-    const r = await g().roQuery(
+    const r = await gr().roQuery(
       `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)-[:HAS]->(p:Process)-[e]->(m)
        WHERE NOT m:Session AND NOT m:Prompt AND coalesce(e.ts, p.first_ts) >= $from AND coalesce(e.ts, p.first_ts) <= $to
        OPTIONAL MATCH (m)-[e2:HAS_VULN]->(v:Vulnerability)
@@ -257,7 +257,7 @@ app.get('/api/graph/device/:id', async (req, res, next) => {
 
 app.get('/api/sessions', async (_req, res, next) => {
   try {
-    const r = await g().roQuery(
+    const r = await gr().roQuery(
       `MATCH (s:Session)
        OPTIONAL MATCH (s)-[:HAS]->(p:Process)
        OPTIONAL MATCH (p)-[e]->()
@@ -283,7 +283,7 @@ app.get('/api/sessions', async (_req, res, next) => {
 app.get('/api/graph/:session', async (req, res, next) => {
   try {
     const session = req.params.session;
-    const r = await g().roQuery(
+    const r = await gr().roQuery(
       `MATCH (s:Session {id: $session})-[:HAS]->(p:Process)
        OPTIONAL MATCH (p)-[e]->(m) WHERE NOT m:Session
        RETURN p, e, m`,
@@ -304,10 +304,10 @@ app.get('/api/graph/:session', async (req, res, next) => {
 app.get('/api/node/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const nr = await g().roQuery('MATCH (n) WHERE ID(n) = $id RETURN n', { params: { id } });
+    const nr = await gr().roQuery('MATCH (n) WHERE ID(n) = $id RETURN n', { params: { id } });
     const node = nr.data?.[0]?.n;
     if (!node) return res.status(404).json({ error: 'no such node' });
-    const tl = await g().roQuery(
+    const tl = await gr().roQuery(
       `MATCH (n) WHERE ID(n) = $id
        MATCH (n)-[e]-(m)
        RETURN type(e) AS action, e.ts AS ts, e.allowed AS allowed, e.argv AS argv, e.port AS port,

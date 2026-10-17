@@ -4,7 +4,7 @@
 // analyst can see exactly which process read what and where it went. Rules
 // only ever add alerts; nothing here can clear a kernel refusal.
 
-import { g } from './db.js';
+import { g, gr } from './db.js';
 
 // Each rule: id, severity, title, Cypher returning (nodes, edges, summary)
 // per match, scoped to one session via $session.
@@ -259,7 +259,7 @@ async function detectUncached(session) {
 // direction, inside one session. Answers "if this file leaked, what else did
 // that tree touch?"
 export async function blastRadius(nodeId, hops = 2) {
-  const graph = g();
+  const graph = gr();
   const res = await graph.roQuery(
     `MATCH (n) WHERE ID(n) = $id
      MATCH path = (n)-[*1..${Math.min(Math.max(hops, 1), 4)}]-(m)
@@ -272,7 +272,7 @@ export async function blastRadius(nodeId, hops = 2) {
 
 // All alerts on one device = union over its sessions.
 export async function detectDevice(deviceId, win) {
-  const graph = g();
+  const graph = gr();
   const r = await graph.roQuery('MATCH (d:Device {id: $id})-[:RUNS]->(s:Session) RETURN s.id AS id', { params: { id: deviceId } });
   const out = [];
   for (const row of r.data || []) for (const a of await detect(row.id, win)) out.push({ session: row.id, ...a });

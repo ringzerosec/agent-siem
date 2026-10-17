@@ -12,7 +12,8 @@
 
 const API = process.env.API || 'http://localhost:8080';
 const DEVICES = Number(process.env.SIM_DEVICES || 12);
-const RATE = Number(process.env.SIM_RATE_MS || 1000);
+const RATE = Number(process.env.SIM_RATE_MS || 1500);
+const SESSION_LEN = Number(process.env.SIM_SESSION_LEN || 120);   // actions per session before the agent run ends and a new one starts
 
 const AGENTS = ['claude-code', 'cursor-agent', 'codex', 'gemini-cli'];
 const OWNERS = ['priya', 'arjun', 'meera', 'rahul', 'ananya', 'vikram', 'sneha', 'karthik', 'divya', 'rohan', 'neha', 'aditya', 'ishita', 'manish', 'pooja', 'sameer', 'tanvi', 'varun', 'kavya', 'nikhil'];
@@ -73,6 +74,10 @@ class Session {
   }
   tick() {
     this.step++;
+    if (this.step > SESSION_LEN) {   // the run ended; a new session starts on the same device
+      this.n = (this.n || 1) + 1; this.id = `${this.device}-s${this.n}`; this.step = 1; this.drifted = false; this.drifts = Math.random() < 0.25; this.driftAt = 8 + Math.floor(Math.random() * 20);
+      this.rootPid += 1000; this.nextPid = this.rootPid + 1;
+    }
     if (this.drifts && !this.drifted && this.step >= this.driftAt) return this.drift();
     return this.normal();
   }
