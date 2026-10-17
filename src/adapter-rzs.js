@@ -143,7 +143,11 @@ async function pollDevice(t) {
       }
     } catch (e) { console.error(`${t.device}: events: ${e.message}`); }
   }
-  if (batch.length) { batch.sort((a, b) => a.ts - b.ts); await post('/api/events', batch); process.stdout.write(`${t.device}:+${batch.length} `); }
+  if (batch.length) {
+    batch.sort((a, b) => a.ts - b.ts);
+    for (let i = 0; i < batch.length; i += 500) await post('/api/events', batch.slice(i, i + 500));   // a backlog can be months
+    process.stdout.write(`${t.device}:+${batch.length} `);
+  }
 }
 
 console.log(`rzs adapter → ${API}; devices: ${targets.map((t) => `${t.device} (${t.url})`).join(', ')}`);

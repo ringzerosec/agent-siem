@@ -21,7 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
 
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // --- time window ---------------------------------------------------------
