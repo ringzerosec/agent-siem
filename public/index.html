@@ -33,6 +33,7 @@
   #wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); grid-auto-rows: minmax(220px, 1fr); gap: 10px; padding: 10px; overflow: auto; }
   .tile { position: relative; background: var(--tile); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
   .tile:hover { border-color: var(--accent); }
+  .tile.sim .dev { color: #6b7686; font-style: italic; }
   .tile.high { border-color: var(--high); }
   .tile.crit { border-color: var(--crit); box-shadow: 0 0 0 1px var(--crit), 0 0 24px rgba(255,77,79,.25); animation: pulse 1.6s ease-in-out 3; }
   @keyframes pulse { 0%,100% { box-shadow: 0 0 0 1px var(--crit), 0 0 24px rgba(255,77,79,.25);} 50% { box-shadow: 0 0 0 2px var(--crit), 0 0 40px rgba(255,77,79,.5);} }
@@ -256,7 +257,8 @@
         state.tiles.set(d.id, t);
       }
       t.el.querySelector('.owner').textContent = d.owner || d.id;
-      t.el.querySelector('.dev').textContent = d.id;
+      t.el.querySelector('.dev').textContent = d.id + (d.simulated ? ' · simulated' : '');
+      t.el.classList.toggle('sim', !!d.simulated);
       t.el.querySelector('.agents').textContent = (d.agents || []).filter(Boolean).join(' · ');
       t.el.querySelector('.badge').textContent = d.alerts ? `${d.alerts} alert${d.alerts > 1 ? 's' : ''}` : 'clean';
       const chips = Object.entries(d.threats || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<span class="tchip" title="${THREATS[k] || k}">${k}${n > 1 ? '×' + n : ''}</span>`).join('');

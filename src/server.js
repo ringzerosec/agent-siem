@@ -111,8 +111,8 @@ app.get('/api/devices', async (_req, res, next) => {
        OPTIONAL MATCH (p)-[e]->() WHERE e.ts >= $since
        WITH d, count(DISTINCT s) AS sessions, count(DISTINCT p) AS procs, count(e) AS actions, max(e.ts) AS last,
             collect(DISTINCT s.agent) AS agents
-       RETURN d.id AS id, d.owner AS owner, sessions, procs, actions, last, agents
-       ORDER BY d.id`,
+       RETURN d.id AS id, d.owner AS owner, d.simulated AS simulated, sessions, procs, actions, last, agents
+       ORDER BY d.simulated, d.id`,
       { params: { since: Date.now() - Number(process.env.GRAPH_WINDOW_HOURS || 24) * 3600 * 1000 } },
     );
     const out = [];

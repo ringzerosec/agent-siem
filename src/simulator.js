@@ -38,7 +38,7 @@ class Session {
     this.drifted = false;
   }
   ev(kind, pid, target, extra = {}) {
-    return { id: `e${++eventSeq}`, ts: now(), device: this.device, owner: this.owner, session: this.id, agent: this.agent, kind, pid, process: extra.process || this.agent, target, allowed: extra.allowed !== false, ppid: extra.ppid, parent_process: extra.parent_process };
+    return { id: `e${++eventSeq}`, ts: now(), device: this.device, owner: this.owner, simulated: true, session: this.id, agent: this.agent, kind, pid, process: extra.process || this.agent, target, allowed: extra.allowed !== false, ppid: extra.ppid, parent_process: extra.parent_process };
   }
   child(name) {
     const pid = this.nextPid++;

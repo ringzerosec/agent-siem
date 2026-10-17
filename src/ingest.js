@@ -75,7 +75,7 @@ export async function ingestEvent(ev) {
 
   await graph.query(
     `MERGE (d:Device {id: $device})
-       ON CREATE SET d.owner = $owner, d.first_ts = $ts
+       ON CREATE SET d.owner = $owner, d.first_ts = $ts, d.simulated = $simulated
      MERGE (s:Session {id: $session})
        ON CREATE SET s.agent = $agent, s.started = $ts, s.device = $device
      SET s.state = coalesce($state, s.state), s.privileged = coalesce($priv, s.privileged), s.privileged_reason = coalesce($preason, s.privileged_reason)
@@ -85,7 +85,7 @@ export async function ingestEvent(ev) {
      MERGE (p:Process {key: $key})
        ON CREATE SET p.pid = $pid, p.name = $proc, p.first_ts = $ts, p.session = $session
      MERGE (s)-[:HAS]->(p)`,
-    { params: { session, device, owner, agent, key, pid, proc: procName, ts, state: ev.session_state ?? null, priv: ev.session_privileged ?? null, preason: ev.session_reason ?? null } },
+    { params: { session, device, owner, agent, key, pid, proc: procName, ts, simulated: ev.simulated === true, state: ev.session_state ?? null, priv: ev.session_privileged ?? null, preason: ev.session_reason ?? null } },
   );
 
   if (ev.ppid) {
