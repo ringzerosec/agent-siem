@@ -18,6 +18,7 @@ import { detectDevice, blastRadius } from './detect.js';
 import * as bus from './bus.js';
 import { campaigns as listCampaignsIntel, indicatorIntel, playbooks } from './intel.js';
 import { aiUsage } from './aiusage.js';
+import { fleetSummary } from './fleet.js';
 
 const text = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 1) }] });
 const fail = (msg) => ({ content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true });
@@ -68,6 +69,12 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
   const server = new McpServer({ name: 'agent-siem-graph', version: '0.1.0' });
 
   // ---- investigation (read-only) -----------------------------------------
+  server.registerTool('fleet_summary', {
+    title: 'Fleet alert summary',
+    description: 'Fleet-wide rollup for the questions a CISO asks first: which endpoints have the most alerts (ranked, with critical counts) and which alert is most common across all laptops (ranked by how many findings and how many endpoints). Use for "which endpoint has the most alerts", "what is the biggest / most repeating alert across the fleet", "where should I look first".',
+    inputSchema: {},
+  }, async () => text(await fleetSummary()));
+
   server.registerTool('list_alerts', {
     title: 'List alerts',
     description: 'Open alerts across the fleet or on one endpoint, worst first. Each has an id, threat (T1-T9 from the Ring Zero Security threat model), severity, whether Ring Zero Security already blocked it, and a one-line summary.',
@@ -369,7 +376,7 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 }
 
 export const TOOL_KIND = {
-  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_playbooks: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
+  fleet_summary: 'read', list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_playbooks: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
   block_host: 'action', contain_session: 'action', approve_decision: 'action', dismiss_decision: 'action', list_decisions: 'read', run_deep_scan: 'action', scan_status: 'read', fleet_inventory: 'read', propose_policies: 'action', iso42001_readiness: 'read', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };

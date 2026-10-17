@@ -24,6 +24,7 @@ import { mountPepper, pepperHeadsUp } from './pepper.js';
 import { syncFindings, campaigns, indicatorIntel, backfillResolution, playbooks } from './intel.js';
 import { brainHealth } from './brain.js';
 import { aiUsage } from './aiusage.js';
+import { fleetSummary } from './fleet.js';
 import { onFinding, onDecision, listDecisions, approveDecision, dismissDecision, setOwners } from './autopilot.js';
 import { startDeepScan, pendingCommands, storeScan, scanStatus, fleetInventory, proposePolicies, iso42001 } from './governance.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -252,6 +253,7 @@ app.get('/api/surface/:device', async (req, res, next) => {
 // infrastructure) and everything known about one indicator.
 app.get('/api/playbooks', async (_req, res, next) => { try { res.json(await playbooks()); } catch (e) { next(e); } });
 app.get('/api/brain', async (_req, res) => res.json((await brainHealth()) || { ok: false }));
+app.get('/api/fleet-summary', async (req, res, next) => { try { res.json(await fleetSummary(windowOf(req.query))); } catch (e) { next(e); } });
 app.get('/api/campaigns', async (_req, res, next) => { try { res.json(await campaigns()); } catch (e) { next(e); } });
 app.get('/api/intel/:value', async (req, res, next) => { try { res.json(await indicatorIntel(req.params.value)); } catch (e) { next(e); } });
 

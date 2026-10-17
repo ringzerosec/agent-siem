@@ -95,7 +95,12 @@ async function investigate(device, alert) {
   if (runs.length >= MAX_PER_HOUR) return;
   runs.push(Date.now());
   try {
-    const exists = await gr().roQuery('MATCH (d:Decision {alert: $id}) RETURN d.id LIMIT 1', { params: { id: alert.id } });
+    // Don't file a second decision for the same attack. Agent sessions rotate,
+    // so the same finding gets a new id each time; dedup on (device, title)
+    // while a decision for it is still pending, not just on the alert id.
+    const exists = await gr().roQuery(
+      `MATCH (d:Decision) WHERE (d.alert = $id) OR (d.device = $device AND d.title = $title AND d.status = 'pending')
+       RETURN d.id LIMIT 1`, { params: { id: alert.id, device, title: alert.title } });
     if (exists.data?.length) return;
     // 1. investigate
     const job = startTriage({ device, alertId: alert.id, mode: AGENT_MODE });
