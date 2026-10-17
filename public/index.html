@@ -593,23 +593,28 @@
   $('#reset').onclick = async () => { await fetch('/api/reset', { method: 'POST' }); closeDevice(); for (const t of state.tiles.values()) t.el.remove(); state.tiles.clear(); $('#wall').innerHTML = '<div id="wallEmpty">Waiting for devices…</div>'; };
 
   // ---- live ---------------------------------------------------------------
+  // Poll a tiny change log instead of holding an EventSource open per tab.
   function connectStream() {
-    const es = new EventSource('/api/stream');
-    es.onopen = () => $('#live').classList.remove('off');
-    es.onerror = () => $('#live').classList.add('off');
-    const dirty = new Set(); let timer = null;
-    es.onmessage = (m) => {
-      const msg = JSON.parse(m.data);
-      if (msg.type === 'reset') { loadWall(); return; }
-      if (msg.type === 'note') { if (msg.device === state.device) loadFeed(state.device); return; }
-      if (msg.device) dirty.add(msg.device);
-      if (timer) return;                     // coalesce bursts into one redraw every 1.5 s
-      timer = setTimeout(async () => {
-        const set = new Set(dirty); dirty.clear(); timer = null;
-        await loadWall(set);
-        if (set.has(state.device)) await openDevice(state.device, true);
-      }, 1500);
-    };
+    let since = 0; const dirty = new Set();
+    async function tick() {
+      try {
+        const r = await fetch(`/api/changes?since=${since}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        const d = await r.json(); $('#live').classList.remove('off');
+        const first = since === 0; since = d.seq;
+        if (!first) {
+          let reset = false;
+          for (const c of d.changes) {
+            if (c.type === 'reset') reset = true;
+            else if (c.type === 'note') { if (c.device === state.device) loadFeed(state.device); }
+            else if (c.device) dirty.add(c.device);
+          }
+          if (reset) { await loadWall(); }
+          else if (dirty.size) { const set = new Set(dirty); dirty.clear(); await loadWall(set); if (set.has(state.device)) await openDevice(state.device, true); }
+        }
+      } catch { $('#live').classList.add('off'); }
+      setTimeout(tick, 2500);
+    }
+    tick();
   }
   loadWall(); connectStream(); setInterval(() => loadWall(new Set()), 15000);
 })();

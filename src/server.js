@@ -24,6 +24,10 @@ const app = express();
 // A slow graph query must never pin a browser connection: answer 503 after
 // 10 s so the client can retry, and recycle idle keep-alive sockets quickly.
 app.use((req, res, next) => { res.setTimeout(10000, () => { if (!res.headersSent) res.status(503).json({ error: 'timeout' }); }); next(); });
+// In-flight request table, for diagnosing stalls: GET /api/_inflight
+const inflight = new Map(); let reqSeq = 0;
+app.use((req, res, next) => { const id = ++reqSeq; inflight.set(id, { path: req.originalUrl.slice(0, 80), at: Date.now() }); res.on('close', () => inflight.delete(id)); next(); });
+app.get('/api/_inflight', (_req, res) => res.json([...inflight.values()].map((r) => ({ ...r, ms: Date.now() - r.at })).sort((a, b) => b.ms - a.ms)));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -37,8 +41,18 @@ function windowOf(q) {
 }
 
 // --- live stream ---------------------------------------------------------
+// Change log for polling clients: no long-lived connection per tab, so open
+// tabs never exhaust the browser's 6-connections-per-host pool.
+let changeSeq = 0; const changes = [];
+function recordChange(msg) { changes.push({ seq: ++changeSeq, ...msg }); if (changes.length > 500) changes.shift(); }
+app.get('/api/changes', (req, res) => {
+  const since = Number(req.query.since || 0);
+  res.json({ seq: changeSeq, changes: since ? changes.filter((c) => c.seq > since) : [] });
+});
+
 const clients = new Set();
 function broadcast(msg) {
+  recordChange(msg);
   const line = `data: ${JSON.stringify(msg)}\n\n`;
   for (const res of clients) res.write(line);
 }
