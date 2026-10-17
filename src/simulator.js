@@ -12,7 +12,7 @@
 
 const API = process.env.API || 'http://localhost:8080';
 const DEVICES = Number(process.env.SIM_DEVICES || 12);
-const RATE = Number(process.env.SIM_RATE_MS || 400);
+const RATE = Number(process.env.SIM_RATE_MS || 1000);
 
 const AGENTS = ['claude-code', 'cursor-agent', 'codex', 'gemini-cli'];
 const OWNERS = ['priya', 'arjun', 'meera', 'rahul', 'ananya', 'vikram', 'sneha', 'karthik', 'divya', 'rohan', 'neha', 'aditya', 'ishita', 'manish', 'pooja', 'sameer', 'tanvi', 'varun', 'kavya', 'nikhil'];

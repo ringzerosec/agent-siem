@@ -21,6 +21,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
 
 const app = express();
+// A slow graph query must never pin a browser connection: answer 503 after
+// 10 s so the client can retry, and recycle idle keep-alive sockets quickly.
+app.use((req, res, next) => { res.setTimeout(10000, () => { if (!res.headersSent) res.status(503).json({ error: 'timeout' }); }); next(); });
 app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -49,18 +52,29 @@ app.get('/api/stream', (req, res) => {
   req.on('close', () => { clearInterval(ping); clients.delete(res); });
 });
 
+// Detection runs off the request path, at most once every 3 s per session,
+// so a busy session cannot saturate the database with rule queries.
+const pendingDetect = new Map();
+function scheduleDetect(session) {
+  if (pendingDetect.has(session)) return;
+  pendingDetect.set(session, setTimeout(async () => {
+    pendingDetect.delete(session);
+    try {
+      invalidate(session);
+      const alerts = await detect(session);
+      const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session } });
+      broadcast({ type: 'update', device: dr.data?.[0]?.id, session, alerts: alerts.length, critical: alerts.filter((a) => a.severity === 'critical').length });
+    } catch (e) { console.error('detect', session, e.message); }
+  }, 3000));
+}
+
 // --- ingest --------------------------------------------------------------
 app.post('/api/events', async (req, res, next) => {
   try {
     const events = Array.isArray(req.body) ? req.body : [req.body];
     const sessions = await ingestMany(events);
-    for (const session of sessions) {
-      invalidate(session);
-      const alerts = await detect(session);
-      const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session } });
-      broadcast({ type: 'update', device: dr.data?.[0]?.id, session, alerts: alerts.length, critical: alerts.filter((a) => a.severity === 'critical').length });
-    }
     res.json({ ingested: events.length, sessions });
+    for (const session of sessions) scheduleDetect(session);
   } catch (e) { next(e); }
 });
 
@@ -323,4 +337,5 @@ app.use((err, _req, res, _next) => {
 });
 
 await connect();
-app.listen(PORT, () => console.log(`graph-watch listening on http://localhost:${PORT}`));
+const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}`));
+srv.keepAliveTimeout = 5000; srv.headersTimeout = 11000;

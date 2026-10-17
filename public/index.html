@@ -403,13 +403,24 @@
     $('#statCrit').innerHTML = `<b>${crit}</b><span>critical</span>`;
     $('#statHigh').innerHTML = `<b>${high}</b><span>high</span>`;
   }
-  async function refreshTile(id, t, d) {
+  // Tile graphs load through a small queue (2 in flight) so the browser's
+  // per-host connection pool stays free for the device view and live stream.
+  const tileQueue = []; let inFlight = 0;
+  function enqueueTile(job) { tileQueue.push(job); pumpTiles(); }
+  async function pumpTiles() {
+    while (inFlight < 2 && tileQueue.length) { const job = tileQueue.shift(); inFlight++; job().catch(() => {}).finally(() => { inFlight--; pumpTiles(); }); }
+  }
+  function refreshTile(id, t, d) {
     const sig = d ? `${d.actions}:${d.procs}:${d.alerts}` : null;
     if (sig && sig === t.sig) return;      // nothing changed on this device
     if (state.device) return;              // a device view is open; the wall is hidden behind it
     if (t.had && Date.now() - (t.at || 0) < 5000) return;   // at most one redraw per tile every 5 s
-    t.at = Date.now();
-    const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}?cap=200`))).json();
+    if (t.queued) return; t.queued = true;
+    enqueueTile(() => drawTile(id, t, sig));
+  }
+  async function drawTile(id, t, sig) {
+    t.queued = false; t.at = Date.now();
+    const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}?cap=200`), { signal: AbortSignal.timeout(12000) })).json();
     t.sig = sig;
     const { vnodes, vedges } = toVis(gph.nodes, gph.edges, gph.alerts, true);
     const have = new Set(t.nodes.getIds());
