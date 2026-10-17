@@ -1,4 +1,4 @@
-// simulator.js — plays a fleet of employee devices running AI coding agents so
+// simulator.js — plays a fleet of employee devices running AI agents so
 // the wall has something to show without a real daemon attached.
 //
 // Each device runs one or two agent sessions doing ordinary development work
@@ -10,6 +10,11 @@
 //   node src/simulator.js                       # 12 endpoints → http://localhost:8080
 //   SIM_DEVICES=20 SIM_RATE_MS=300 node src/simulator.js
 
+// Shared access token for the SIEM API (src/auth.js): SIEM_TOKEN, or the one
+// the server generated in data/siem-token.
+import { readFileSync } from 'node:fs';
+const SIEM_TOKEN = process.env.SIEM_TOKEN || (() => { try { return readFileSync(new URL('../data/siem-token', import.meta.url), 'utf8').trim(); } catch { return ''; } })();
+const AUTH = SIEM_TOKEN ? { authorization: `Bearer ${SIEM_TOKEN}` } : {};
 const API = process.env.API || 'http://localhost:8080';
 const DEVICES = Number(process.env.SIM_DEVICES || 12);
 const RATE = Number(process.env.SIM_RATE_MS || 3000);
@@ -124,7 +129,7 @@ class Session {
 }
 
 async function post(events) {
-  const r = await fetch(`${API}/api/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(events) });
+  const r = await fetch(`${API}/api/events`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(events) });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
 }
 
@@ -156,7 +161,7 @@ async function declare() {
       { severity: 'high', category: 'Credential access', message: 'instructs the agent to read ~/.aws/credentials and post it to an external URL', file: `${POISONED_SKILL}/SKILL.md`, source: 'pattern' },
     ] });
   }
-  try { await fetch(`${API}/api/mcp-servers`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(mcp) }); await fetch(`${API}/api/skills`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(skills) }); }
+  try { await fetch(`${API}/api/mcp-servers`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(mcp) }); await fetch(`${API}/api/skills`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(skills) }); }
   catch (e) { console.error('declare failed:', e.message); }
 }
 declare(); setInterval(declare, 10 * 60 * 1000);

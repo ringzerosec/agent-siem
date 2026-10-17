@@ -24,6 +24,11 @@
 //   tamper_* → tamper           contained_exec_blocked → exec (refused)
 //   contained_file_blocked → read (refused)     offensive_prompt → prompt (flagged)
 
+// Shared access token for the SIEM API (src/auth.js): SIEM_TOKEN, or the one
+// the server generated in data/siem-token.
+import { readFileSync } from 'node:fs';
+const SIEM_TOKEN = process.env.SIEM_TOKEN || (() => { try { return readFileSync(new URL('../data/siem-token', import.meta.url), 'utf8').trim(); } catch { return ''; } })();
+const AUTH = SIEM_TOKEN ? { authorization: `Bearer ${SIEM_TOKEN}` } : {};
 const API = process.env.API || 'http://localhost:8080';
 const POLL = Number(process.env.RZS_POLL_MS || 2000);
 const TOKEN = process.env.RZS_TOKEN || '';
@@ -46,7 +51,7 @@ async function get(url) {
   return r.json();
 }
 async function post(path, body) {
-  const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }

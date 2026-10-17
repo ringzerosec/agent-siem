@@ -1,28 +1,45 @@
+# Agent SIEM: FalkorDB + NATS JetStream + the console + a simulated fleet.
+#   cp .env.example .env   (set SIEM_TOKEN; API keys optional)
+#   docker compose up --build
+#   open http://localhost:8080/?token=<SIEM_TOKEN>
 services:
   falkordb:
-    image: falkordb/falkordb:latest
-    ports: ["6379:6379", "3000:3000"]
+    image: falkordb/falkordb:v4.22.1
+    ports: ["127.0.0.1:6379:6379", "127.0.0.1:3000:3000"]   # graph + FalkorDB browser, local only
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.10.29-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
-    ports: ["4222:4222", "8222:8222"]
     volumes: ["nats-data:/data"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz?js-enabled-only=true"]
+      interval: 2s
+      retries: 30
   app:
     build: .
     environment:
       FALKORDB_HOST: falkordb
       NATS_URL: nats://nats:4222
+      SIEM_TOKEN: ${SIEM_TOKEN:?set SIEM_TOKEN in .env (see .env.example)}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # optional: Claude triage agent (playbook without it)
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}         # optional: Zero voice assistant (GPT-Live)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}         # optional: Pepper, the voice security engineer
       PORT: "8080"
     ports: ["8080:8080"]
-    depends_on: [falkordb, nats]
+    depends_on:
+      falkordb: { condition: service_healthy }
+      nats: { condition: service_healthy }
+    restart: on-failure
   simulator:
     build: .
     command: ["node", "src/simulator.js"]
     environment:
       API: http://app:8080
+      SIEM_TOKEN: ${SIEM_TOKEN:?set SIEM_TOKEN in .env (see .env.example)}
       SIM_DEVICES: "12"
     depends_on: [app]
+    restart: on-failure
 volumes:
   nats-data:
