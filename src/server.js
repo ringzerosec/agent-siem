@@ -15,7 +15,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, g, gr, wipe } from './db.js';
-import { ingestMany, ingestMcpServers, ingestNotes } from './ingest.js';
+import { ingestMany, ingestMcpServers, ingestNotes, ingestSkills } from './ingest.js';
 import * as bus from './bus.js';
 import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
@@ -220,6 +220,43 @@ app.post('/mcp', async (req, res) => {
   catch (e) { if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: e.message }, id: null }); }
 });
 app.get('/mcp', (_req, res) => res.status(405).set('Allow', 'POST').json({ jsonrpc: '2.0', error: { code: -32000, message: 'Use POST (stateless Streamable HTTP).' }, id: null }));
+
+async function writeSkills(items) {
+  await ingestSkills(items);
+  for (const d of new Set(items.map((k) => String(k.device)))) broadcast({ type: 'update', device: d });
+}
+app.post('/api/skills', async (req, res, next) => {
+  try {
+    const items = asArray(req.body);
+    if (bus.enabled()) { await bus.publishArray('skills', items); return res.status(202).json({ queued: items.length }); }
+    await writeSkills(items); res.json({ ingested: items.length });
+  } catch (e) { next(e); }
+});
+// MCP servers (declared, approved?, tool calls, blocked) and skills for one endpoint.
+app.get('/api/surface/:device', async (req, res, next) => {
+  try {
+    const device = req.params.device;
+    const mr = await gr().roQuery(
+      `MATCH (d:Device {id: $device})
+       OPTIONAL MATCH (d)-[:DECLARES]->(m:McpServer)
+       WITH d, collect(m) AS declared
+       OPTIONAL MATCH (d)-[:RUNS]->(:Session)-[:HAS]->(:Process)-[u:USED_TOOL]->(t:McpTool)
+       WITH declared, t.server AS server, count(u) AS calls, sum(CASE WHEN u.allowed = false THEN 1 ELSE 0 END) AS refused, collect(DISTINCT t.name)[0..8] AS tools
+       RETURN declared, collect({server: server, calls: calls, refused: refused, tools: tools}) AS used`, { params: { device } });
+    const row = mr.data?.[0] || { declared: [], used: [] };
+    const approved = new Set((process.env.APPROVED_MCP || 'filesystem,github,postgres').split(',').map((x) => x.trim()));
+    const servers = new Map();
+    for (const m of row.declared || []) servers.set(m.properties.name, { name: m.properties.name, declared: true, approved: !!m.properties.approved, held: !!m.properties.held, transport: m.properties.transport, agent: m.properties.agent, calls: 0, refused: 0, tools: [] });
+    for (const u of row.used || []) {
+      if (!u.server) continue;
+      const cur = servers.get(u.server) || { name: u.server, declared: false, approved: approved.has(u.server), held: false, calls: 0, refused: 0, tools: [] };
+      Object.assign(cur, { calls: u.calls, refused: u.refused, tools: u.tools }); servers.set(u.server, cur);
+    }
+    const sk = await gr().roQuery('MATCH (d:Device {id: $device})-[:HAS_SKILL]->(s:Skill) RETURN s ORDER BY s.finding_count DESC', { params: { device } });
+    res.json({ mcp: [...servers.values()].sort((a, b) => (a.approved - b.approved) || (b.calls - a.calls)),
+      skills: (sk.data || []).map((x) => ({ id: x.s.id, ...x.s.properties, findings: (() => { try { return JSON.parse(x.s.properties.findings || '[]'); } catch { return []; } })() })) });
+  } catch (e) { next(e); }
+});
 
 app.get('/api/bus', async (_req, res, next) => {
   try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }
@@ -550,7 +587,7 @@ async function refreshIps() {
   } catch (e) { console.error('approved IPs', e.message); }
 }
 await refreshIps(); setInterval(refreshIps, 10 * 60 * 1000);
-if (await bus.start()) bus.consume({ onEvents: writeEvents, onMcp: writeMcp, onNotes: writeNotes });
+if (await bus.start()) bus.consume({ onEvents: writeEvents, onMcp: writeMcp, onNotes: writeNotes, onSkills: writeSkills });
 { const r = await gr().roQuery('MATCH (s:Session) RETURN s.id AS id ORDER BY coalesce(s.started, 0) DESC'); for (const row of r.data || []) scheduleDetect(row.id, false); }   // newest sessions first
 const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}`));
 if (process.env.TTS !== 'off') warmTts();

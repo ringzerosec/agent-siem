@@ -73,7 +73,7 @@ export async function publishAction(device, action) {
 // Drain the stream forever: fetch up to BATCH messages, group them by kind,
 // write each group in one call, then ack. A failed write naks the batch so
 // JetStream redelivers it after a short delay.
-export async function consume({ onEvents, onMcp, onNotes }) {
+export async function consume({ onEvents, onMcp, onNotes, onSkills }) {
   const c = await js.consumers.get(STREAM, DURABLE);
   for (;;) {
     let msgs = [];
@@ -82,17 +82,19 @@ export async function consume({ onEvents, onMcp, onNotes }) {
       for await (const m of it) msgs.push(m);
     } catch (e) { console.error('bus fetch', e.message); await new Promise((r) => setTimeout(r, 1000)); continue; }
     if (!msgs.length) continue;
-    const events = [], mcp = [], notes = [];
+    const events = [], mcp = [], notes = [], skills = [];
     for (const m of msgs) {
       const body = JSON.parse(sc.decode(m.data));
       if (m.subject.startsWith('rzs.events.')) events.push(body);
       else if (m.subject.startsWith('rzs.mcp.')) mcp.push(...body);
       else if (m.subject.startsWith('rzs.notes.')) notes.push(...body);
+      else if (m.subject.startsWith('rzs.skills.')) skills.push(...body);
     }
     try {
       if (events.length) await onEvents(events);
       if (mcp.length) await onMcp(mcp);
       if (notes.length) await onNotes(notes);
+      if (skills.length && onSkills) await onSkills(skills);
       for (const m of msgs) m.ack();
     } catch (e) {
       console.error('bus write', e.message);

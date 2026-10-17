@@ -126,6 +126,24 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
     return text({ device, id: alert.id, title: alert.title, summary: alert.summary, severity: alert.severity, threat: alert.threat, blocked: alert.blocked ?? null, mitre: alert.attack, recommended: alert.response, sessions: alert.sessions, path: { nodes, edges }, secrets: followups, hosts: exposure, process_timeline: timeline });
   });
 
+  server.registerTool('mcp_and_skills', {
+    title: 'MCP servers and skills',
+    description: 'What an endpoint\'s agents can load: every MCP server declared or used (approved, untrusted or held; how many tool calls; how many were blocked) and every skill, plugin, rule file or MCP config the skill scanner found, with its risk and findings. Use it for questions about MCPs, skills, plugins or supply chain.',
+    inputSchema: { device: z.string() },
+  }, async ({ device }) => {
+    const approvedSet = new Set((process.env.APPROVED_MCP || 'filesystem,github,postgres').split(',').map((x) => x.trim()));
+    const d = await gr().roQuery('MATCH (:Device {id: $device})-[:DECLARES]->(m:McpServer) RETURN m', { params: { device } });
+    const u = await gr().roQuery(
+      `MATCH (:Device {id: $device})-[:RUNS]->(:Session)-[:HAS]->(:Process)-[e:USED_TOOL]->(t:McpTool)
+       RETURN t.server AS server, count(e) AS calls, sum(CASE WHEN e.allowed = false THEN 1 ELSE 0 END) AS blocked, collect(DISTINCT t.name)[0..6] AS tools`, { params: { device } });
+    const servers = new Map();
+    for (const r of d.data || []) { const p = r.m.properties; servers.set(p.name, { name: p.name, declared: true, trust: p.held ? 'held' : p.approved ? 'approved' : 'untrusted', transport: p.transport, calls: 0, blocked: 0 }); }
+    for (const r of u.data || []) { const cur = servers.get(r.server) || { name: r.server, declared: false, trust: approvedSet.has(r.server) ? 'approved' : 'untrusted', calls: 0, blocked: 0 }; Object.assign(cur, { calls: r.calls, blocked: r.blocked, tools: r.tools }); servers.set(r.server, cur); }
+    const sk = await gr().roQuery('MATCH (:Device {id: $device})-[:HAS_SKILL]->(k:Skill) RETURN k', { params: { device } });
+    const skills = (sk.data || []).map((r) => { const p = r.k.properties; let f = []; try { f = JSON.parse(p.findings || '[]'); } catch {} return { id: r.k.id, agent: p.agent, kind: p.kind, path: p.path, risk: p.risk, findings: f.slice(0, 4) }; });
+    return text({ device, mcp_servers: [...servers.values()], skills });
+  });
+
   server.registerTool('process_timeline', {
     title: 'Process timeline',
     description: 'Everything one process did, in time order: files read and written, programs run, children spawned, hosts contacted, MCP tools used. Use it to see what an agent did before and after the suspicious step.',
@@ -269,7 +287,7 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 }
 
 export const TOOL_KIND = {
-  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
+  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
   block_host: 'action', contain_session: 'action', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };

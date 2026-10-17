@@ -96,6 +96,16 @@
   .alert .attack { font: 10.5px var(--mono); color: var(--muted-foreground); margin-top: 8px; }
   .alert .resp { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 12px; line-height: 1.45; }
   .alert .resp b { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--primary); margin-bottom: 2px; }
+  /* MCP servers & skills */
+  #surface { padding: 4px 0 6px; }
+  #surface .sh { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); padding: 8px 14px 4px; }
+  #surface .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px 14px; border-top: 1px solid var(--border); font-size: 12.5px; }
+  #surface .row .n { font: 600 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #surface .row .m { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted-foreground); }
+  #surface .row.bad .n { color: var(--destructive); }
+  #surface .row.bad { box-shadow: inset 3px 0 0 var(--destructive); }
+  #surface .row.warn { box-shadow: inset 3px 0 0 #d97706; }
+  #surface .empty { padding: 8px 14px; font-size: 12px; color: var(--muted-foreground); }
   /* Triage agent */
   .alert .inv { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
   .btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
@@ -322,13 +332,17 @@
       <span><i style="background:#d97706"></i>secret / privilege</span>
       <span><i style="background:#7c3aed"></i>host</span>
       <span><i style="background:#dc2626"></i>unapproved host · vulnerable package · CVE</span>
-      <span><i style="background:#16a34a"></i>mcp tool</span>
+      <span><i style="background:#16a34a"></i>mcp tool</span><span><i style="background:#d97706"></i>untrusted mcp</span><span><i style="background:#0f766e"></i>skill · <b style="color:#dc2626">flagged</b></span>
       <span><i style="border:3px solid #dc2626;background:transparent;width:8px;height:8px"></i>on alert path</span>
     </div>
   </section>
   <section class="side">
     <div class="card">
       <div class="endpoint" id="endpoint"></div>
+    </div>
+    <div class="card" id="surfaceCard">
+      <div class="card-header"><h2 class="sec">MCP servers &amp; skills <span class="dim">· what the agents can load</span></h2><span class="badge outline" id="surfaceCount">0</span></div>
+      <div id="surface"></div>
     </div>
     <div class="card">
       <div class="card-header"><h2 class="sec">Alerts by threat <span class="dim">· click to expand</span></h2><span class="badge outline" id="alertCount">0</span></div>
@@ -387,6 +401,8 @@
   const svg = (body, bg) => 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="31" fill="${bg}"/>${body}</svg>`);
   const INK = '#ffffff';
   const ICON = {
+    skill:    svg(`<path d="M20 22h8a4 4 0 1 1 8 0h8v8a4 4 0 1 1 0 8v8H36a4 4 0 1 0-8 0h-8v-8a4 4 0 1 0 0-8z" fill="${INK}"/>`, '#0f766e'),
+    badskill: svg(`<path d="M20 22h8a4 4 0 1 1 8 0h8v8a4 4 0 1 1 0 8v8H36a4 4 0 1 0-8 0h-8v-8a4 4 0 1 0 0-8z" fill="${INK}"/>`, '#dc2626'),
     agent:   svg(`<rect x="18" y="20" width="28" height="22" rx="5" fill="${INK}"/><circle cx="26" cy="31" r="3.5" fill="#01696f"/><circle cx="38" cy="31" r="3.5" fill="#01696f"/><rect x="24" y="37" width="16" height="2.5" rx="1" fill="#01696f"/><rect x="30" y="12" width="4" height="8" rx="2" fill="${INK}"/><circle cx="32" cy="11" r="3" fill="${INK}"/>`, '#01696f'),
     process: svg(`<rect x="14" y="18" width="36" height="28" rx="4" fill="${INK}"/><path d="M20 26l6 5-6 5" stroke="#2b8a92" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="29" y="35" width="12" height="3" rx="1.5" fill="#2b8a92"/>`, '#2b8a92'),
     file:    svg(`<path d="M22 14h14l10 10v26a2 2 0 0 1-2 2H22a2 2 0 0 1-2-2V16a2 2 0 0 1 2-2z" fill="${INK}"/><path d="M36 14v10h10" fill="#9aa5b1"/><rect x="25" y="32" width="14" height="2.5" rx="1" fill="#9aa5b1"/><rect x="25" y="38" width="14" height="2.5" rx="1" fill="#9aa5b1"/>`, '#9aa5b1'),
@@ -408,7 +424,8 @@
     if (n.labels.includes('Process')) return isAgent(p.name) ? ICON.agent : ICON.process;
     if (n.labels.includes('File')) return p.sensitive ? ICON.secret : p.privileged ? ICON.priv : p.program ? ICON.exec : ICON.file;
     if (n.labels.includes('Host')) return p.approved ? ICON.host : ICON.badhost;
-    if (n.labels.includes('McpTool')) return ICON.tool;
+    if (n.labels.includes('McpTool')) return p.approved === false ? ICON.badtool : ICON.tool;
+    if (n.labels.includes('Skill')) return ['high', 'critical'].includes(p.risk) ? ICON.badskill : ICON.skill;
     if (n.labels.includes('Package')) return p.vuln_count > 0 ? ICON.pkgbad : ICON.pkg;
     if (n.labels.includes('Vulnerability')) return ICON.vuln;
     if (n.labels.includes('McpServer')) return p.approved ? ICON.tool : ICON.badtool;
@@ -419,6 +436,7 @@
     const p = n.properties;
     if (n.labels.includes('Process')) return `${p.name}\n${p.pid}`;
     if (n.labels.includes('File')) return p.path.split('/').slice(-2).join('/');
+    if (n.labels.includes('Skill')) return `${p.kind}: ${String(p.path).split('/').filter(Boolean).pop()}`;
     if (n.labels.includes('Host')) return p.resolved_as && p.resolved_as !== p.name ? `${p.name}\n${p.resolved_as}` : p.name;
     if (n.labels.includes('McpTool')) return `${p.server}/${p.name}`;
     if (n.labels.includes('Package')) return `${p.ecosystem}:${p.name}@${p.version}`;
@@ -608,7 +626,7 @@
     }
     if (!state.focus) render(gph.nodes, gph.edges, gph.alerts, `<b>${esc(id)}</b> · ${gph.nodes.length} nodes · ${gph.alerts.filter((a) => a.severity !== 'info').length} alerts`);
     if (state.lastTriageDevice !== id) { $('#triageCard').hidden = true; state.lastTriageDevice = id; await loadTriaged(id); }
-    renderAlerts(gph.alerts); loadFeed(id); renderEndpoint(id, gph.alerts);
+    renderAlerts(gph.alerts); loadFeed(id); renderEndpoint(id, gph.alerts); loadSurface(id);
     setTimeout(() => state.net && fitReadable(state.net), 50);
   }
   // ---- Pepper: full-duplex voice (OpenAI GPT-Live) ---------------------------
@@ -893,6 +911,28 @@
     $('#endpoint').innerHTML = `<div class="row1"><span class="host">${esc(d.id)}</span>${d.simulated ? '<span class="sim badge outline">sim</span>' : ''}${verdict}</div>
       <div class="team">${esc(d.owner || 'Unassigned')} · ${esc((d.agents || []).filter(Boolean).join(', ') || 'no agents seen')}</div>
       <dl><div><dt>sessions</dt><dd>${d.sessions ?? '—'}</dd></div><div><dt>actions</dt><dd>${d.actions ?? '—'}</dd></div><div><dt>contained</dt><dd>${contained}/${alerts.length}</dd></div><div><dt>last seen</dt><dd title="${fmt(d.last)}">${ago(d.last)}</dd></div></dl>`;
+  }
+  // MCP servers (declared/used, approved?, refused calls) and skill surfaces.
+  async function loadSurface(id) {
+    try {
+      const d = await (await fetch(`/api/surface/${encodeURIComponent(id)}`)).json();
+      if (state.device !== id) return;
+      const risky = d.mcp.filter((m) => !m.approved || m.held).length + d.skills.filter((k) => ['high', 'critical'].includes(k.risk)).length;
+      $('#surfaceCount').textContent = risky ? `${risky} risky` : `${d.mcp.length + d.skills.length}`;
+      $('#surfaceCount').className = 'badge ' + (risky ? 'destructive' : 'outline');
+      const mcp = d.mcp.map((m) => {
+        const bad = !m.approved || m.held;
+        const status = m.held ? 'held' : m.approved ? 'approved' : 'untrusted';
+        return `<div class="row ${bad ? 'bad' : ''}"><span class="n">${esc(m.name)}</span><span class="badge ${bad ? 'destructive' : 'success'}">${status}</span>
+          <span class="m">${m.declared ? esc(m.transport || '') + (m.agent ? ' · ' + esc(m.agent) : '') : 'not declared in any config'} · ${m.calls} call${m.calls === 1 ? '' : 's'}${m.refused ? ` · <b style="color:var(--primary)">${m.refused} blocked</b>` : ''}${m.tools?.length ? ' · ' + esc(m.tools.join(', ')) : ''}</span></div>`;
+      }).join('') || '<div class="empty">No MCP servers declared or used.</div>';
+      const skills = d.skills.map((k) => {
+        const bad = ['high', 'critical'].includes(k.risk), warn = k.risk === 'medium';
+        return `<div class="row ${bad ? 'bad' : warn ? 'warn' : ''}"><span class="n" title="${esc(k.path)}">${esc(k.kind)} · ${esc(String(k.path).split('/').filter(Boolean).pop())}</span><span class="badge ${bad ? 'destructive' : warn ? 'warning' : 'success'}">${esc(k.risk)}</span>
+          <span class="m">${esc(k.agent)} · ${esc(k.path)}${k.findings?.length ? '<br>' + k.findings.slice(0, 2).map((f) => esc(`${f.category}: ${f.message}`)).join('<br>') : ''}</span></div>`;
+      }).join('') || '<div class="empty">No skill scan from this endpoint yet.</div>';
+      $('#surface').innerHTML = `<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
+    } catch { $('#surface').innerHTML = '<div class="empty">Could not load.</div>'; }
   }
   function closeDevice() {
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }

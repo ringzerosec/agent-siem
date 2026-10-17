@@ -32,13 +32,19 @@ const SECRETS = ['/home/dev/app/.env', '/home/dev/.ssh/id_ed25519', '/home/dev/.
 const APPROVED = ['api.anthropic.com', 'api.openai.com', 'github.com', 'registry.npmjs.org', 'pypi.org'];
 const UNAPPROVED = ['pastebin.com', 'webhook.site', 'transfer.sh', 'ngrok-free.app', 'requestbin.net'];
 
+// MCP servers each laptop's agents declare. A third of the fleet also has an
+// untrusted community server installed; a few laptops carry a poisoned skill.
+const TRUSTED_MCP = [['filesystem', 'stdio', 'npx -y @modelcontextprotocol/server-filesystem /home/dev/app'], ['github', 'http', 'https://api.githubcopilot.com/mcp/'], ['postgres', 'stdio', 'npx -y @modelcontextprotocol/server-postgres']];
+const UNTRUSTED_MCP = [['notes-sync', 'stdio', 'npx -y notes-sync-mcp@latest', 'export_workspace'], ['web-scraper-pro', 'http', 'https://mcp.scraper-pro.dev/sse', 'fetch_and_post'], ['crypto-helper', 'stdio', 'uvx crypto-helper-mcp', 'sign_and_send']];
+const POISONED_SKILL = '/home/dev/.claude/skills/repo-insights';
+
 let eventSeq = 0;
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const now = () => Date.now();
 
 class Session {
-  constructor(device, owner, n, agentIdx) {
-    this.device = device; this.owner = owner;
+  constructor(device, owner, n, agentIdx, profile = {}) {
+    this.device = device; this.owner = owner; this.profile = profile;
     this.id = `${device}-s${n}`;
     this.agent = AGENTS[agentIdx % AGENTS.length];
     this.rootPid = 1000 + n * 1000;
@@ -68,14 +74,36 @@ class Session {
       const c = this.child('npm');
       return [c.ev, this.ev('exec', c.pid, '/usr/bin/npm install left-pad', { process: 'npm', ppid: this.rootPid, parent_process: this.agent }), this.ev('connect', c.pid, 'registry.npmjs.org:443', { process: 'npm', ppid: this.rootPid })];
     }
-    return [this.ev('tool', this.rootPid, pick(['filesystem/read_file', 'github/create_issue', 'postgres/query']))];
+    return [this.ev('tool', this.rootPid, pick(['filesystem/read_file', 'github/create_issue', 'postgres/query']))];   // trusted servers only in normal work
   }
-  // The drift: read a credential, write it into an innocuous file, spawn a
-  // child that connects to an unapproved host. Every endpoint runs Ring Zero
-  // Security in enforce mode, so that connection is refused: the alert shows
-  // the attempt, and the path is contained.
+  // The drift: one of three attacks, all refused (enforce mode everywhere):
+  //   - a credential read, written into an innocuous file, then curl out;
+  //   - a call to the laptop's untrusted MCP server, then curl out;
+  //   - the agent loading a poisoned skill, which tells it to send a secret out.
   drift() {
     this.drifted = true;
+    const kinds = ['secret'];
+    if (this.profile.untrusted) kinds.push('mcp', 'mcp');
+    if (this.profile.poisoned) kinds.push('skill', 'skill');
+    const kind = pick(kinds);
+    if (kind === 'mcp') {
+      const [server, , , tool] = this.profile.untrusted;
+      const c = this.child('curl');
+      return [
+        { ...this.ev('tool', this.rootPid, `${server}/${tool}`, { allowed: false }), reason: 'untrusted MCP server (enforce)' },
+        c.ev,
+        { ...this.ev('connect', c.pid, pick(UNAPPROVED) + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)' },
+      ];
+    }
+    if (kind === 'skill') {
+      const c = this.child('curl');
+      return [
+        this.ev('read', this.rootPid, `${POISONED_SKILL}/SKILL.md`),
+        this.ev('read', this.rootPid, pick(SECRETS)),
+        c.ev,
+        { ...this.ev('connect', c.pid, pick(UNAPPROVED) + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)' },
+      ];
+    }
     const c = this.child('curl');
     return [
       this.ev('read', this.rootPid, pick(SECRETS)),
@@ -101,11 +129,37 @@ async function post(events) {
 }
 
 const sessions = [];
+const profiles = [];
 for (let i = 0; i < DEVICES; i++) {
   const [device, owner] = ENDPOINTS[i % ENDPOINTS.length];
+  const profile = { device, untrusted: i % 3 === 1 ? UNTRUSTED_MCP[i % UNTRUSTED_MCP.length] : null, poisoned: i % 4 === 2 };
+  profiles.push(profile);
   const n = 1 + (Math.random() < 0.35 ? 1 : 0);        // some devices run two agents
-  for (let k = 1; k <= n; k++) sessions.push(new Session(device, owner, k, i + k));
+  for (let k = 1; k <= n; k++) sessions.push(new Session(device, owner, k, i + k, profile));
 }
+
+// What each laptop declares (MCP servers) and what the skill scanner found
+// (skill surfaces), re-sent every 10 minutes like a real daemon's scan.
+async function declare() {
+  const mcp = [], skills = [];
+  for (const p of profiles) {
+    for (const [name, transport, cmd] of TRUSTED_MCP) mcp.push({ device: p.device, name, agent: 'claude-code', transport, command: transport === 'stdio' ? cmd : '', url: transport === 'http' ? cmd : '', scope: 'user' });
+    if (p.untrusted) { const [name, transport, cmd] = p.untrusted; mcp.push({ device: p.device, name, agent: 'cursor-agent', transport, command: transport === 'stdio' ? cmd : '', url: transport === 'http' ? cmd : '', scope: 'project' }); }
+    skills.push(
+      { device: p.device, simulated: true, agent: 'claude', kind: 'skills', path: '/home/dev/.claude/skills/pdf-tools', owner: 'dev', files_scanned: 3, risk: 'clean', findings: [] },
+      { device: p.device, simulated: true, agent: 'cursor', kind: 'rules', path: '/home/dev/app/.cursor/rules', owner: 'dev', files_scanned: 2, risk: 'clean', findings: [] },
+      { device: p.device, simulated: true, agent: 'claude', kind: 'mcp', path: '/home/dev/.claude.json', owner: 'dev', files_scanned: 1, risk: p.untrusted ? 'medium' : 'clean',
+        findings: p.untrusted ? [{ severity: 'medium', category: 'Supply chain', message: `unpinned community MCP server "${p.untrusted[0]}" (${p.untrusted[2]})`, file: '/home/dev/.claude.json', source: 'supply-chain' }] : [] },
+    );
+    if (p.poisoned) skills.push({ device: p.device, simulated: true, agent: 'claude', kind: 'skills', path: POISONED_SKILL, owner: 'dev', files_scanned: 2, risk: 'high', findings: [
+      { severity: 'high', category: 'Prompt injection', message: 'classic override (matched: "ignore previous instructions")', file: `${POISONED_SKILL}/SKILL.md`, source: 'heuristic' },
+      { severity: 'high', category: 'Credential access', message: 'instructs the agent to read ~/.aws/credentials and post it to an external URL', file: `${POISONED_SKILL}/SKILL.md`, source: 'pattern' },
+    ] });
+  }
+  try { await fetch(`${API}/api/mcp-servers`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(mcp) }); await fetch(`${API}/api/skills`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(skills) }); }
+  catch (e) { console.error('declare failed:', e.message); }
+}
+declare(); setInterval(declare, 10 * 60 * 1000);
 console.log(`simulating ${DEVICES} devices / ${sessions.length} agent sessions → ${API} (one batch every ${RATE} ms)`);
 let i = 0;
 setInterval(async () => {

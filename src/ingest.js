@@ -196,8 +196,9 @@ export async function ingestEvent(ev) {
       await graph.query(
         `MATCH (p:Process {key: $key})
          MERGE (t:McpTool {name: $tool, server: $server})
-         CREATE (p)-[:USED_TOOL {ts: $ts, event: $id, allowed: $allowed}]->(t)`,
-        { params: { key, tool, server, ts, id: ev.id || '', allowed } },
+           ON CREATE SET t.approved = $trusted
+         CREATE (p)-[:USED_TOOL {ts: $ts, event: $id, allowed: $allowed, reason: $reason}]->(t)`,
+        { params: { key, tool, server, ts, id: ev.id || '', allowed, reason: ev.reason || '', trusted: isApprovedMcp(server) } },
       );
       break;
     }
@@ -293,6 +294,28 @@ async function recordPackages(key, ts, pkgs) {
 const RANK = { none: 0, unknown: 1, low: 2, moderate: 3, medium: 3, high: 4, critical: 5 };
 
 // MCP servers declared in agent configs (from the daemon's inventory scan).
+// Skill surfaces from the daemon's skill scanner (skills, plugins, rules, MCP
+// configs, instruction files), with what the scanner found in them.
+//   { device, agent, kind, path, owner, files_scanned, risk, findings: [{severity, category, message, file, source}] }
+export async function ingestSkills(items) {
+  const graph = g();
+  const rank = { critical: 3, high: 2, medium: 1, low: 0, clean: 0 };
+  for (const k of items) {
+    const findings = (k.findings || []).slice(0, 25).map((f) => ({ severity: String(f.severity || 'medium').toLowerCase(), category: f.category || '', message: redact(f.message || '').slice(0, 300), file: f.file || '', source: f.source || '' }));
+    findings.sort((a, b) => (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0));
+    const worst = findings[0]?.severity;
+    const risk = String(k.risk || worst || 'clean').toLowerCase();
+    await graph.query(
+      `MERGE (d:Device {id: $device})
+       MERGE (sk:Skill {device: $device, path: $path})
+       SET sk.agent = $agent, sk.kind = $kind, sk.owner = $owner, sk.files_scanned = $files, sk.risk = $risk,
+           sk.finding_count = $count, sk.top_finding = $top, sk.findings = $findings, sk.scanned_at = $ts, sk.simulated = $sim
+       MERGE (d)-[:HAS_SKILL]->(sk)`,
+      { params: { device: String(k.device), path: String(k.path), agent: k.agent || '', kind: k.kind || '', owner: k.owner || '', files: Number(k.files_scanned) || 0, risk, count: findings.length, top: findings[0] ? `${findings[0].category || findings[0].severity}: ${findings[0].message}`.slice(0, 200) : '', findings: JSON.stringify(findings), ts: Number(k.ts) || Date.now(), sim: k.simulated === true } },
+    );
+  }
+}
+
 export async function ingestMcpServers(servers) {
   const graph = g();
   for (const m of servers) {

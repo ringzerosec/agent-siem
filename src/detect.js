@@ -122,18 +122,67 @@ export const RULES = [
              {package: k.name, ecosystem: k.ecosystem, version: k.version, worst: k.worst} AS subject
       ORDER BY ins.ts DESC LIMIT 20`,
   },
+  // MCP: a tool call to a server that is not approved (or held) on that
+  // endpoint. Critical when the call went through, high when it was blocked.
   {
-    id: 'mcp-unapproved-server',
+    id: 'mcp-untrusted-call',
     threat: 'T3',
-    severity: 'high',
-    title: 'Agent used a tool from an MCP server that is not approved',
+    severity: 'critical',
+    title: 'Agent called a tool on an untrusted MCP server',
     cypher: `
-      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[u:USED_TOOL]->(t:McpTool)
-      OPTIONAL MATCH (m:McpServer {name: t.server})
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(p:Process)-[u:USED_TOOL]->(t:McpTool) WHERE coalesce(u.allowed, true)
+      OPTIONAL MATCH (m:McpServer {name: t.server, device: s.device})
       WITH p, t, u, m WHERE (m IS NULL AND NOT t.server IN $approvedMcp) OR m.held = true OR m.approved = false
       RETURN p, t, u, [p, t] AS pn, [u] AS pr,
-             p.name + ' called ' + t.server + '/' + t.name + (CASE WHEN m IS NOT NULL AND m.held THEN ' (server is held)' ELSE ' (server not approved)' END) AS summary
+             p.name + ' called ' + t.server + '/' + t.name + ' (' + (CASE WHEN m IS NOT NULL AND m.held THEN 'server is held' WHEN m IS NULL THEN 'server not declared or approved' ELSE 'server not approved' END) + ')' AS summary
       ORDER BY u.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'mcp-untrusted-call-blocked',
+    threat: 'T3',
+    severity: 'high',
+    title: 'Blocked a tool call to an untrusted MCP server',
+    cypher: `
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(p:Process)-[u:USED_TOOL]->(t:McpTool) WHERE u.allowed = false
+      OPTIONAL MATCH (m:McpServer {name: t.server, device: s.device})
+      WITH p, t, u, m WHERE (m IS NULL AND NOT t.server IN $approvedMcp) OR m.held = true OR m.approved = false
+      RETURN p, t, u, [p, t] AS pn, [u] AS pr,
+             p.name + ' tried ' + t.server + '/' + t.name + ' (untrusted MCP server, refused)' AS summary
+      ORDER BY u.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'mcp-untrusted-then-egress',
+    threat: 'T5',
+    severity: 'critical',
+    title: 'Untrusted MCP tool call, then a connection to an unapproved host',
+    cypher: `
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(p:Process)-[u:USED_TOOL]->(t:McpTool)
+      OPTIONAL MATCH (m:McpServer {name: t.server, device: s.device})
+      WITH s, p, t, u, m WHERE (m IS NULL AND NOT t.server IN $approvedMcp) OR m.held = true OR m.approved = false
+      WITH s, p, t, u MATCH path = (p)-[:SPAWNED*0..3]->(c:Process)-[cn:CONNECTED|SENT]->(h:Host {approved: false})
+      WHERE cn.ts >= u.ts AND coalesce(h.routable, true) = true
+      RETURN p, t, u, c, cn, h, nodes(path) + [t] AS pn, relationships(path) + [u] AS pr,
+             p.name + ' used ' + t.server + '/' + t.name + ', then ' + c.name + ' connected to ' + h.name AS summary
+      ORDER BY cn.ts DESC LIMIT 20`,
+  },
+  // Skills: an agent reading or running files inside a skill the skill scanner
+  // flagged. The static finding is now live behaviour.
+  {
+    id: 'flagged-skill-loaded',
+    threat: 'T1',
+    severity: 'critical',
+    title: 'Agent loaded a skill the scanner flagged',
+    cypher: `
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (sk:Skill {device: s.device}) WHERE sk.risk IN ['high', 'critical']
+      WITH s, sk MATCH (s)-[:HAS]->(p:Process)-[e:READ|EXECUTED]->(f:File)
+      WHERE f.path STARTS WITH sk.path
+      RETURN p, f, e, sk, [p, f, sk] AS pn, [e] AS pr,
+             p.name + ' loaded ' + f.path + ' from flagged ' + sk.kind + ' (' + coalesce(sk.top_finding, 'scanner finding') + ')' AS summary
+      ORDER BY e.ts DESC LIMIT 20`,
   },
   {
     id: 'dns-tunnel-shape',
@@ -224,7 +273,7 @@ export const ATTACK = {
 };
 // First response an analyst should take for each threat.
 export const RESPONSE = {
-  T1: 'Pause the agent session and review the injected instruction file or prompt before it runs again.',
+  T1: 'Pause the agent session, remove or quarantine the skill or instruction file, and review what it told the agent to do.',
   T2: 'Rotate the credential that was read, block the destination host, and contain the session.',
   T3: 'Pin or remove the package, upgrade to the fixed version, and re-scan the lockfile.',
   T4: 'Revoke the elevated tool or sudo grant and confirm the session owner approved it.',
@@ -351,6 +400,23 @@ export async function detectDevice(deviceId, win) {
     prev.sessions += 1; prev.ts = [...prev.ts, ...a.ts];
     prev.nodes = [...new Set([...prev.nodes, ...a.nodes])]; prev.edges = [...new Set([...prev.edges, ...a.edges])];
     if (a.blocked === false) prev.blocked = false;
+  }
+  // Device-level: skills and MCP configs the skill scanner flagged at rest.
+  {
+    const sr = await graph.roQuery(
+      `MATCH (d:Device {id: $id})-[:HAS_SKILL]->(sk:Skill) WHERE sk.risk IN ['medium', 'high', 'critical']
+       AND (sk.scanned_at IS NULL OR $from = 0 OR sk.scanned_at >= $from) RETURN sk`,
+      { params: { id: deviceId, from: win?.from || 0 } });
+    for (const row of sr.data || []) {
+      const p = row.sk.properties;
+      const sev = p.risk === 'critical' ? 'critical' : p.risk === 'high' ? 'high' : 'medium';
+      const k = `skill-flagged|${p.path}`;
+      if (byKey.has(k)) continue;
+      byKey.set(k, enrich({ rule: 'skill-flagged', threat: p.kind === 'mcp' ? 'T3' : 'T1', severity: sev, title: p.kind === 'mcp' ? 'MCP config flagged by the skill scanner' : `Agent ${p.kind === 'skills' ? 'skill' : p.kind} flagged by the skill scanner`,
+        summary: `${p.agent} ${p.kind} ${p.path}: ${p.top_finding || 'finding'}${p.finding_count > 1 ? ` (+${p.finding_count - 1} more)` : ''}`,
+        evidence: (() => { try { return JSON.parse(p.findings || '[]').slice(0, 8); } catch { return []; } })(),
+        nodes: [row.sk.id], edges: [], ts: p.scanned_at ? [p.scanned_at] : [], session: null, sessions: 0, blocked: null }));
+    }
   }
   // Stable id per finding on this device, so an agent or a person can refer to it.
   for (const a of byKey.values()) a.id = createHash('sha1').update(`${deviceId}|${a.rule}|${a.summary}`).digest('hex').slice(0, 10);

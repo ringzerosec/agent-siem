@@ -88,6 +88,36 @@ function mapEvent(ev, device, owner, session) {
   return out;
 }
 
+// Skill surfaces: the daemon's skill scanner (POST /api/v1/skill-scan/auto,
+// read-only) every SKILL_SCAN_MIN minutes. Each root (skills, plugins, rules,
+// MCP configs, instruction files) becomes a Skill node with its findings.
+const SKILL_EVERY = Number(process.env.SKILL_SCAN_MIN || 10) * 60 * 1000;
+const lastSkillScan = new Map();
+function injectionSeverity(f) {
+  const sig = (f.signals || []).join(' ').toLowerCase();
+  if (/override|exfil|credential|curl|ignore previous|hidden instruction/.test(sig)) return 'high';
+  const c = Number(f.confidence) || 0;
+  return c >= 0.7 ? 'high' : c >= 0.5 ? 'medium' : 'low';
+}
+async function scanSkills(t) {
+  if (Date.now() - (lastSkillScan.get(t.device) || 0) < SKILL_EVERY) return;
+  lastSkillScan.set(t.device, Date.now());
+  const r = await fetch(`${t.url}/api/v1/skill-scan/auto`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(60000) });
+  if (!r.ok || !(r.headers.get('content-type') || '').includes('json')) return;   // older daemons: no skill scanner
+  const scan = await r.json();
+  const items = (scan.results || []).map((x) => {
+    const findings = [
+      ...(x.injection_reports || []).flatMap((rep) => (rep.findings || []).map((f) => ({ severity: injectionSeverity(f), category: 'Prompt injection', message: (f.signals || []).join('; '), file: rep.path, source: f.source }))),
+      ...(x.pattern_findings || []).map((f) => ({ severity: String(f.severity || 'medium').toLowerCase(), category: f.category || f.pattern_name, message: f.message || f.pattern_name, file: f.file, source: 'pattern' })),
+      ...(x.supply_findings || []).flatMap((rep) => (rep.findings || []).map((f) => ({ severity: String(f.severity || rep.risk || 'medium').toLowerCase(), category: 'Supply chain', message: f.message || f.kind || '', file: rep.path || f.file, source: 'supply-chain' }))),
+    ];
+    const order = { critical: 3, high: 2, medium: 1, low: 0 };
+    const worst = findings.reduce((w, f) => ((order[f.severity] ?? 0) > (order[w] ?? -1) ? f.severity : w), 'clean');
+    return { device: t.device, agent: x.agent, kind: x.kind, path: x.path, owner: x.owner, files_scanned: x.files_scanned, risk: worst, findings };
+  });
+  if (items.length) { await post('/api/skills', items); process.stdout.write(`${t.device}:skills ${items.length} `); }
+}
+
 const seen = new Map();  // device → Set of event ids already sent
 const sentNotes = new Map(); // session → last commentary seq
 const lastInv = new Map();   // device → last inventory sent (only resend on change)
@@ -107,6 +137,8 @@ async function pollDevice(t) {
     const sig = JSON.stringify(servers);
     if (servers.length && lastInv.get(t.device) !== sig) { await post('/api/mcp-servers', servers); lastInv.set(t.device, sig); }
   } catch (e) { if (!/404/.test(e.message)) console.error(`${t.device}: inventory: ${e.message}`); }
+
+  try { await scanSkills(t); } catch (e) { console.error(`${t.device}: skill scan: ${e.message}`); }
 
   let sessions = [];
   try { sessions = await get(`${t.url}/api/v1/sessions`); if (!Array.isArray(sessions)) sessions = sessions.sessions || []; } catch (e) { console.error(`${t.device}: sessions: ${e.message}`); }
