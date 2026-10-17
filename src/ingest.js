@@ -66,7 +66,36 @@ const APPROVED_HOSTS = new Set(
   (process.env.APPROVED_HOSTS || 'api.anthropic.com,api.openai.com,github.com,registry.npmjs.org,pypi.org,crates.io,files.pythonhosted.org')
     .split(',').map((s) => s.trim()).filter(Boolean),
 );
-export function isApprovedHost(name) { return APPROVED_HOSTS.has(name); }
+// Daemons often see the IP, not the name: npm connects to 104.16.x.34, not
+// registry.npmjs.org. Each approved name is resolved on a timer and its exact
+// addresses are approved too (never whole CDN ranges: attackers host on
+// Cloudflare as well). Addresses are kept once seen, since CDNs rotate them.
+// APPROVED_IPS adds fixed addresses by hand.
+const APPROVED_IPS = new Map(  // ip -> approved hostname it belongs to
+  (process.env.APPROVED_IPS || '').split(',').map((s) => s.trim()).filter(Boolean).map((ip) => [ip, 'APPROVED_IPS']),
+);
+export function approvedAs(name) { return APPROVED_HOSTS.has(name) ? name : APPROVED_IPS.get(name) || null; }
+export function isApprovedHost(name) { return approvedAs(name) !== null; }
+export async function refreshApprovedIps() {
+  const { promises: dns } = await import('node:dns');
+  const fresh = [];
+  await Promise.all([...APPROVED_HOSTS].map(async (h) => {
+    for (const fam of ['resolve4', 'resolve6']) {
+      try { for (const ip of await dns[fam](h)) if (!APPROVED_IPS.has(ip)) { APPROVED_IPS.set(ip, h); fresh.push({ ip, host: h }); } } catch { /* no records of this family */ }
+    }
+  }));
+  // Mark every stored Host that is one of these addresses as approved.
+  const rows = [...APPROVED_IPS].map(([ip, host]) => ({ ip, host }));
+  const r = await g().query(
+    `UNWIND $rows AS x MATCH (h:Host {name: x.ip})
+     WHERE coalesce(h.approved, false) = false OR h.resolved_as IS NULL
+     SET h.approved = true, h.resolved_as = x.host
+     WITH h MATCH (s:Session)-[:HAS]->(:Process)-[:CONNECTED|SENT]->(h)
+     RETURN DISTINCT s.id AS id`,
+    { params: { rows } },
+  );
+  return { learned: fresh.length, total: APPROVED_IPS.size, sessions: (r.data || []).map((x) => x.id) };
+}
 // A real network destination, not a parse fragment ("0.0.0.0", ".so.1", "Root_CA.crt").
 export function isRoutable(name) {
   const n = String(name || '');
@@ -154,9 +183,9 @@ export async function ingestEvent(ev) {
       await graph.query(
         `MATCH (p:Process {key: $key})
          MERGE (h:Host {name: $host})
-           ON CREATE SET h.approved = $approved, h.routable = $routable
+           ON CREATE SET h.approved = $approved, h.routable = $routable, h.resolved_as = $resolvedAs
          CREATE (p)-[:CONNECTED {ts: $ts, event: $id, allowed: $allowed, port: $port}]->(h)`,
-        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), ts, id: ev.id || '', allowed, port: Number(port) || 443 } },
+        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), resolvedAs: approvedAs(host), ts, id: ev.id || '', allowed, port: Number(port) || 443 } },
       );
       break;
     }
@@ -183,9 +212,9 @@ export async function ingestEvent(ev) {
       const [host, port] = target.split(':');
       await graph.query(
         `MATCH (p:Process {key: $key})
-         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved, h.routable = $routable
+         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved, h.routable = $routable, h.resolved_as = $resolvedAs
          CREATE (p)-[:SENT {ts: $ts, event: $id, allowed: $allowed, port: $port, reason: $reason}]->(h)`,
-        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), ts, id: ev.id || '', allowed, port: Number(port) || 443, reason: ev.reason || '' } },
+        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), resolvedAs: approvedAs(host), ts, id: ev.id || '', allowed, port: Number(port) || 443, reason: ev.reason || '' } },
       );
       break;
     }
@@ -195,10 +224,10 @@ export async function ingestEvent(ev) {
       const longest = Math.max(...labels.map((l) => l.length));
       await graph.query(
         `MATCH (p:Process {key: $key})
-         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved, h.routable = $routable
+         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved, h.routable = $routable, h.resolved_as = $resolvedAs
          SET h.longest_label = $longest, h.labels = $nlabels
          CREATE (p)-[:RESOLVED {ts: $ts, event: $id, allowed: $allowed}]->(h)`,
-        { params: { key, host: name, approved: isApprovedHost(name), routable: isRoutable(name), longest, nlabels: labels.length, ts, id: ev.id || '', allowed } },
+        { params: { key, host: name, approved: isApprovedHost(name), routable: isRoutable(name), resolvedAs: approvedAs(name), longest, nlabels: labels.length, ts, id: ev.id || '', allowed } },
       );
       break;
     }

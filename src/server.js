@@ -398,6 +398,17 @@ await connect();
   for (let i = 0; i < rows.length; i += 500) await g().query('UNWIND $rows AS x MATCH (h:Host {name: x.name}) SET h.routable = x.ok', { params: { rows: rows.slice(i, i + 500) } });
   if (rows.length) console.log(`classified ${rows.length} hosts (${rows.filter((x) => !x.ok).length} not routable)`);
 }
+// Approved hostnames → their current IPs, now and every 10 minutes; sessions
+// that talked to a newly approved address get their alerts recomputed.
+async function refreshIps() {
+  try {
+    const { refreshApprovedIps } = await import('./ingest.js');
+    const r = await refreshApprovedIps();
+    for (const id of r.sessions) scheduleDetect(id);
+    if (r.learned || r.sessions.length) console.log(`approved IPs: +${r.learned} (${r.total} known), ${r.sessions.length} sessions to recheck`);
+  } catch (e) { console.error('approved IPs', e.message); }
+}
+await refreshIps(); setInterval(refreshIps, 10 * 60 * 1000);
 if (await bus.start()) bus.consume({ onEvents: writeEvents, onMcp: writeMcp, onNotes: writeNotes });
 { const r = await gr().roQuery('MATCH (s:Session) RETURN s.id AS id ORDER BY coalesce(s.started, 0) DESC'); for (const row of r.data || []) scheduleDetect(row.id, false); }   // newest sessions first
 const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}`));

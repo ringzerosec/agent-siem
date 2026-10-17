@@ -346,7 +346,7 @@
     const p = n.properties;
     if (n.labels.includes('Process')) return `${p.name}\n${p.pid}`;
     if (n.labels.includes('File')) return p.path.split('/').slice(-2).join('/');
-    if (n.labels.includes('Host')) return p.name;
+    if (n.labels.includes('Host')) return p.resolved_as && p.resolved_as !== p.name ? `${p.name}\n${p.resolved_as}` : p.name;
     if (n.labels.includes('McpTool')) return `${p.server}/${p.name}`;
     if (n.labels.includes('Package')) return `${p.ecosystem}:${p.name}@${p.version}`;
     if (n.labels.includes('Vulnerability')) return p.id;
