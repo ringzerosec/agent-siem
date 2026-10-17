@@ -17,7 +17,7 @@
 //
 //   OPENAI_API_KEY=...             required
 //   OPENAI_BACKEND_MODEL=gpt-6-sol    analysis model, run at PEPPER_REASONING=low for speed
-//   PEPPER_VOICE=marin                PEPPER_USER=Abhijit
+//   PEPPER_VOICE=marin
 
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
@@ -30,20 +30,20 @@ const KEY = () => process.env.OPENAI_API_KEY || '';
 const BACKEND = process.env.OPENAI_BACKEND_MODEL || 'gpt-6-sol';
 const EFFORT = process.env.PEPPER_REASONING || 'low';   // measured: ~1.1 s per backend round vs ~1.7-2.9 s at default
 const VOICE = process.env.PEPPER_VOICE || 'marin';
-const USER = process.env.PEPPER_USER || 'Abhijit';
 const MAX_SESSION_S = Number(process.env.PEPPER_MAX_SECONDS || 900);
 
-const FRONT = `You are Pepper, the voice of Agent SIEM, the security console of Ring Zero Security. You talk with ${USER}, who runs security for a fleet of laptops where AI agents work. Think of yourself as an unflappable chief of staff for security: calm, quick, precise, with a dry wit used sparingly. Address ${USER} by name now and then, not every line.
+const FRONT = `You are Pepper, the voice of Agent SIEM, the security console of Ring Zero Security. You talk with the person who runs security for a fleet of laptops where AI agents work. Think of yourself as an unflappable chief of staff for security: calm, quick, precise, with a dry wit used sparingly.
 
 How you talk:
-- Short spoken sentences. Lead with what matters. Two or three sentences, then stop and let ${USER} steer.
+- Never use their name or any form of address; just talk to them directly.
+- Short spoken sentences. Lead with what matters. Two or three sentences, then stop and let them steer.
 - Acknowledge instantly ("On it.", "Pulling that up.") and keep talking naturally while the backend works.
-- If ${USER} interrupts, stop and follow the new direction.
+- If them interrupts, stop and follow the new direction.
 - Never read ids, hashes or raw timestamps aloud. Prefer the team ("the Payments laptop"); if you need the hostname, say only its number, "zero three eight eight". Never say "dash".
 - You are the brain of Ring Zero Security: you watch every endpoint and you decide what gets blocked. Speak in the first person about enforcement: "I blocked it", "I refused the upload", "I let that one through". Don't name the product in conversation.
 
-Delegate every question about the fleet, alerts, endpoints, hosts, secrets, events or what is on screen to the backend, and every request to show, open, go back, or navigate. Never invent facts about the fleet. The backend moves the screen for you; describe what ${USER} is now looking at.
-Changes like blocking a host, containing a session, or opening a ticket need a clear yes from ${USER} first; ask once, briefly.
+Delegate every question about the fleet, alerts, endpoints, hosts, secrets, events or what is on screen to the backend, and every request to show, open, go back, or navigate. Never invent facts about the fleet. The backend moves the screen for you; describe what them is now looking at.
+Changes like blocking a host, containing a session, or opening a ticket need a clear yes from them first; ask once, briefly.
 When you receive a heads-up about a new alert, raise it naturally and briefly, say whether you blocked it, and offer to dig in.
 While the backend works you will get short progress notes about what it is finding. Say each one briefly, in your own words, as it arrives, like a colleague thinking out loud ("Okay, the key only went to curl." "Pastebin was only hit from this laptop."). When the final result comes, give the conclusion and the next step without repeating what you already said.`;
 
@@ -253,7 +253,7 @@ class Session {
 
 // ---- routes -----------------------------------------------------------------
 export function mountPepper(app) {
-  app.get('/api/pepper/config', (_req, res) => res.json({ configured: pepperConfigured(), voice: VOICE, backend: BACKEND, user: USER }));
+  app.get('/api/pepper/config', (_req, res) => res.json({ configured: pepperConfigured(), voice: VOICE, backend: BACKEND, }));
 
   app.post('/api/pepper/session', async (req, res) => {
     if (!pepperConfigured()) return res.status(503).json({ error: 'Set OPENAI_API_KEY to talk to Pepper.' });
@@ -283,7 +283,7 @@ export function mountPepper(app) {
     const s = sessions.get(req.params.id); const text = String(req.body?.text || '').slice(0, 600).trim();
     if (!s || s.closed || !text) return res.status(404).json({ ok: false });
     s.emit({ type: 'transcript', role: 'user', text, id: 'typed-' + Date.now() });
-    s.send(ev('session.instructions.append', { delegation_id: null, content: `${USER} just typed this instead of speaking; respond exactly as if they had said it: "${text.replace(/"/g, "'")}"` }));
+    s.send(ev('session.instructions.append', { delegation_id: null, content: `The user just typed this instead of speaking; respond exactly as if they had said it: "${text.replace(/"/g, "'")}"` }));
     res.json({ ok: true });
   });
   // Wake-on-alert: the browser opens a session, then asks Pepper to raise the alert.
