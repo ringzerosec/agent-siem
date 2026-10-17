@@ -3,6 +3,7 @@
 //
 //   RZS=priya-laptop=http://localhost:7700,build-vm=http://10.0.0.5:7700 node src/adapter-rzs.js
 //   RZS_TOKEN=...   bearer token if the daemon API requires one
+//   RZS_TOKEN_priya_laptop=...   per-device token (device id with - → _)
 //   RZS_POLL_MS=2000
 //   RZS_SINCE_HOURS=24  skip sessions that ended before this window
 //
@@ -32,7 +33,12 @@ const targets = (process.env.RZS || 'local=http://localhost:7700').split(',').ma
   return { device: device.trim(), url: url.trim().replace(/\/$/, '') };
 });
 
-const headers = TOKEN ? { authorization: `Bearer ${TOKEN}` } : {};
+// Token per device: RZS_TOKEN_<device with - as _> wins over RZS_TOKEN.
+function headersFor(device) {
+  const t = process.env[`RZS_TOKEN_${device.replace(/[^A-Za-z0-9]/g, '_')}`] || TOKEN;
+  return t ? { authorization: `Bearer ${t}` } : {};
+}
+let headers = {};
 async function get(url) {
   const r = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
   if (!r.ok) throw new Error(`${r.status} ${url}`);
@@ -85,6 +91,7 @@ const seen = new Map();  // device → Set of event ids already sent
 const sentNotes = new Map(); // session → last commentary seq
 
 async function pollDevice(t) {
+  headers = headersFor(t.device);
   const ids = seen.get(t.device) || new Set();
   seen.set(t.device, ids);
   let owner = '';
