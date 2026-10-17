@@ -89,6 +89,43 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
     return text({ device, id: alert.id, rule: alert.rule, threat: alert.threat, severity: alert.severity, title: alert.title, summary: alert.summary, blocked: alert.blocked ?? null, mitre: alert.attack, sessions: alert.sessions, evidence: alert.evidence, nodes, edges });
   });
 
+  // One call instead of four round trips: the voice assistant asks this when
+  // the user wants to know what happened, so the answer comes back in one hop.
+  server.registerTool('investigate_alert', {
+    title: 'Investigate alert (one call)',
+    description: 'Everything needed to explain one alert, in a single call: the exact path (nodes, edges, allowed or refused), whether each secret on it was read or sent anywhere else in the fleet, whether each external host on it was contacted from other endpoints, and what the acting process did around it. Prefer this over calling get_alert, secret_followups, host_fleet_exposure and process_timeline separately.',
+    inputSchema: { device: z.string(), alert_id: z.string() },
+  }, async ({ device, alert_id }) => {
+    const { alert } = await findAlert(device, alert_id);
+    if (!alert) return fail(`no alert ${alert_id} on ${device}`);
+    const nodes = alert.nodes.length ? (await gr().roQuery('MATCH (n) WHERE ID(n) IN $ids RETURN n', { params: { ids: alert.nodes } })).data.map((x) => brief(x.n)) : [];
+    const edges = alert.edges.length ? (await gr().roQuery('MATCH (a)-[e]->() WHERE ID(a) IN $src AND ID(e) IN $ids RETURN e', { params: { src: alert.nodes, ids: alert.edges } })).data.map((x) => edgeBrief(x.e)) : [];
+    edges.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const secrets = nodes.filter((n) => n.kind === 'File' && n.secret).slice(0, 3);
+    const hosts = nodes.filter((n) => n.kind === 'Host').slice(0, 3);
+    const proc = nodes.find((n) => n.kind === 'Process');
+    const [followups, exposure, timeline] = await Promise.all([
+      Promise.all(secrets.map(async (f) => {
+        const r = await gr().roQuery(
+          `MATCH (f:File {path: $path})<-[rd:READ]-(p:Process) MATCH (s:Session)-[:HAS]->(p)
+           OPTIONAL MATCH (p)-[:SPAWNED*0..3]->(c:Process)-[cn:CONNECTED|SENT]->(h:Host) WHERE cn.ts >= rd.ts AND coalesce(h.routable, true)
+           RETURN s.device AS device, p.name AS reader, collect(DISTINCT {host: h.name, approved: h.approved, allowed: cn.allowed}) AS egress LIMIT 30`, { params: { path: f.name } });
+        const rows = (r.data || []).map((x) => ({ ...x, egress: x.egress.filter((e) => e.host) }));
+        return { secret: f.name, read_on_endpoints: [...new Set(rows.map((x) => x.device))], unapproved_egress_after_read: rows.flatMap((x) => x.egress.filter((e) => !e.approved).map((e) => ({ device: x.device, host: e.host, allowed: e.allowed !== false }))) };
+      })),
+      Promise.all(hosts.map(async (h) => {
+        const r = await gr().roQuery(
+          `MATCH (h:Host {name: $host})<-[e:CONNECTED|SENT|RESOLVED]-(p:Process)<-[:HAS]-(s:Session)
+           RETURN s.device AS device, count(e) AS attempts, sum(CASE WHEN coalesce(e.allowed, true) THEN 1 ELSE 0 END) AS allowed`, { params: { host: h.name } });
+        const rows = r.data || [];
+        return { host: h.name, approved: h.approved, endpoints: rows.map((x) => x.device), attempts: rows.reduce((n, x) => n + x.attempts, 0), allowed: rows.reduce((n, x) => n + x.allowed, 0) };
+      })),
+      proc ? gr().roQuery(`MATCH (p:Process) WHERE ID(p) = $id MATCH (p)-[e]->(m) WHERE e.ts IS NOT NULL RETURN type(e) AS action, e.allowed AS allowed, m ORDER BY e.ts LIMIT 40`, { params: { id: proc.id } })
+        .then((r) => (r.data || []).map((x) => `${x.action.toLowerCase()} ${brief(x.m).name}${x.allowed === false ? ' (refused)' : ''}`)) : [],
+    ]);
+    return text({ device, id: alert.id, title: alert.title, summary: alert.summary, severity: alert.severity, threat: alert.threat, blocked: alert.blocked ?? null, mitre: alert.attack, recommended: alert.response, sessions: alert.sessions, path: { nodes, edges }, secrets: followups, hosts: exposure, process_timeline: timeline });
+  });
+
   server.registerTool('process_timeline', {
     title: 'Process timeline',
     description: 'Everything one process did, in time order: files read and written, programs run, children spawned, hosts contacted, MCP tools used. Use it to see what an agent did before and after the suspicious step.',
@@ -232,7 +269,7 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 }
 
 export const TOOL_KIND = {
-  list_alerts: 'read', get_alert: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
+  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
   block_host: 'action', contain_session: 'action', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };

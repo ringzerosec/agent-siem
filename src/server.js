@@ -21,7 +21,7 @@ import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
 import { ask, getEngineerJob, reset as resetEngineer } from './engineer.js';
 import { synth, warmTts } from './tts.js';
-import { mountZero, zeroHeadsUp } from './zero.js';
+import { mountPepper, pepperHeadsUp } from './pepper.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
@@ -94,7 +94,7 @@ setInterval(async () => {
 }, 250);
 
 // New critical/high alerts become a change-log entry ('alert'), so a browser
-// with Zero asleep can wake it, and a heads-up for any live Zero session.
+// with Pepper asleep can wake it, and a heads-up for any live Pepper session.
 // Alerts that already existed at startup are not announced.
 const announced = new Set(); let announceReady = false;
 async function announceNew(device) {
@@ -103,9 +103,9 @@ async function announceNew(device) {
     if (!['critical', 'high'].includes(a.severity) || announced.has(a.id)) continue;
     announced.add(a.id);
     if (!announceReady) continue;
-    const said = `Heads-up: new ${a.severity} alert on ${device}: ${a.title}. ${a.blocked === true ? 'Ring Zero Security blocked it.' : a.blocked === false ? 'It was not blocked.' : ''}`;
+    const said = `Heads-up: new ${a.severity} alert on ${device}: ${a.title}. ${a.blocked === true ? 'You (the enforcement brain) blocked it.' : a.blocked === false ? 'You did not block it.' : ''}`;
     broadcast({ type: 'alert', device, alert: { id: a.id, severity: a.severity, title: a.title, blocked: a.blocked ?? null }, text: said });
-    zeroHeadsUp(said, { tool: 'focus_alert', args: { device, alert_id: a.id } });
+    pepperHeadsUp(said, { tool: 'focus_alert', args: { device, alert_id: a.id } });
   }
 }
 setTimeout(async () => {   // seed with what exists, then start announcing
@@ -156,8 +156,8 @@ app.post('/api/notes', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// --- Zero: full-duplex voice (OpenAI GPT-Live) --------------------------------
-mountZero(app);
+// --- Pepper: full-duplex voice (OpenAI GPT-Live) ------------------------------
+mountPepper(app);
 
 // --- security engineer (conversational, drives the screen) -----------------
 app.post('/api/engineer', (req, res) => {

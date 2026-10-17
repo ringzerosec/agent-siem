@@ -113,7 +113,7 @@
   #triage .verdict { margin: 8px 14px 4px; padding: 10px 12px; border-radius: 8px; background: var(--accent); }
   #triage .verdict .vh { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-weight: 600; }
   #triage .verdict ul { margin: 6px 0 0; padding-left: 18px; font: 11.5px var(--mono); color: var(--muted-foreground); }
-  /* Zero: voice assistant */
+  /* Pepper: voice assistant */
   #zeroBtn { gap: 8px; }
   #zeroBtn .zdot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
   #zeroBtn.armed .zdot { background: var(--primary); }
@@ -139,7 +139,7 @@
   #zero .cap .hint i { font-style: normal; color: var(--foreground); }
   #zero .zf { display: flex; gap: 14px; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted-foreground); }
   #zero .zf label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
-  /* Minimised: a pill with the orb, state and Zero's latest line; click to expand. */
+  /* Minimised: a pill with the orb, state and Pepper's latest line; click to expand. */
   #zero.min { width: min(340px, calc(100vw - 32px)); border-radius: 999px; cursor: pointer; }
   #zero.min .cap, #zero.min .zf, #zero.min #zMin, #zero.min #zClose { display: none; }
   #zero.min .zt { padding: 8px 10px 8px 8px; gap: 10px; }
@@ -273,7 +273,7 @@
   <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
-  <button class="btn sm" id="zeroBtn" title="Zero, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Zero</span></button>
+  <button class="btn sm" id="zeroBtn" title="Pepper, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Pepper</span></button>
   <span class="spacer"></span>
   <div class="seg" id="range" role="tablist" aria-label="Time range">
     <button data-r="24h" class="on">24 h</button><button data-r="today">Today</button><button data-r="yday">Yesterday</button><button data-r="7d">7 days</button><button data-r="all">All</button>
@@ -352,12 +352,12 @@
   </section>
 </div>
 
-<section id="zero" hidden aria-label="Zero, voice assistant">
+<section id="zero" hidden aria-label="Pepper, voice assistant">
   <div class="zt"><div class="orb off" id="zOrb"></div>
-    <div class="zs"><b>Zero</b><span id="zState">asleep</span></div>
-    <div class="zb"><button class="btn sm primary" id="zTalk">Talk</button><button class="btn sm" id="zMin" aria-label="Minimise" title="Minimise (Zero keeps listening)">–</button><button class="btn sm" id="zClose" aria-label="Close" title="Close and sleep">×</button></div></div>
-  <div class="cap" id="zCap" aria-live="polite"><div class="hint">Say <i>“Hey Zero”</i> or press <i>Talk</i>. Talk naturally and interrupt any time. Try <i>“What should I worry about?”</i>, <i>“Show me why the ML Research laptop is red.”</i>, <i>“Did that key go anywhere else?”</i>, <i>“Go to sleep.”</i></div></div>
-  <div class="zf"><label><input type="checkbox" id="zWake" checked> listen for “Hey Zero”</label><label><input type="checkbox" id="zAlerts" checked> speak up on new alerts</label></div>
+    <div class="zs"><b>Pepper</b><span id="zState">asleep</span></div>
+    <div class="zb"><button class="btn sm primary" id="zTalk">Talk</button><button class="btn sm" id="zMin" aria-label="Minimise" title="Minimise (Pepper keeps listening)">–</button><button class="btn sm" id="zClose" aria-label="Close" title="Close and sleep">×</button></div></div>
+  <div class="cap" id="zCap" aria-live="polite"><div class="hint">Say <i>“Hey Pepper”</i> or press <i>Talk</i>. Talk naturally and interrupt any time. Try <i>“What should I worry about?”</i>, <i>“Show me why the ML Research laptop is red.”</i>, <i>“Did that key go anywhere else?”</i>, <i>“Go to sleep.”</i></div></div>
+  <div class="zf"><label><input type="checkbox" id="zWake" checked> listen for “Hey Pepper”</label><label><input type="checkbox" id="zAlerts" checked> speak up on new alerts</label></div>
 </section>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
 <script>
@@ -611,13 +611,13 @@
     renderAlerts(gph.alerts); loadFeed(id); renderEndpoint(id, gph.alerts);
     setTimeout(() => state.net && fitReadable(state.net), 50);
   }
-  // ---- Zero: full-duplex voice (OpenAI GPT-Live) ---------------------------
-  // States: off -> armed (listening locally for "Hey Zero") -> live (WebRTC to
+  // ---- Pepper: full-duplex voice (OpenAI GPT-Live) ---------------------------
+  // States: off -> armed (listening locally for "Hey Pepper") -> live (WebRTC to
   // GPT-Live; you can talk over it) -> back to armed after a quiet spell.
-  // Zero's backend moves the screen through 'ui' events while it speaks.
+  // Pepper's backend moves the screen through 'ui' events while it speaks.
   const Z = { state: 'off', id: null, pc: null, mic: null, es: null, rec: null, lastHeard: 0, working: false, audio: null, raf: 0, cfg: null, wakeText: null };
   const zCap = $('#zCap');
-  const speak = () => {};   // the triage panel used to speak through here; Zero speaks for itself now
+  const speak = () => {};   // the triage panel used to speak through here; Pepper speaks for itself now
   function zLine(cls, text, merge) {
     zCap.querySelector('.hint')?.remove();
     let el = merge && zCap.lastElementChild?.classList.contains(cls) && zCap.lastElementChild.dataset.k === merge ? zCap.lastElementChild : null;
@@ -630,7 +630,7 @@
     $('#zState').textContent = label;
     $('#zOrb').className = 'orb' + (state === 'off' || state === 'armed' ? ' off' : '') + (Z.working ? ' working' : '');
     $('#zeroBtn').classList.toggle('armed', state === 'armed'); $('#zeroBtn').classList.toggle('live', state === 'live' || state === 'connecting');
-    $('#zeroBtnTxt').textContent = state === 'live' ? 'Zero · live' : state === 'armed' ? 'Zero · listening' : 'Zero';
+    $('#zeroBtnTxt').textContent = state === 'live' ? 'Pepper · live' : state === 'armed' ? 'Pepper · listening' : 'Pepper';
     $('#zTalk').textContent = state === 'live' || state === 'connecting' ? 'Sleep' : 'Talk';
   }
   // What the user is looking at, so "this one" means something.
@@ -687,11 +687,11 @@
     if (!SR) { zSet('off', 'wake word needs Chrome; press Talk'); return; }
     if (Z.rec) return;
     const rec = new SR(); rec.lang = 'en-US'; rec.continuous = true; rec.interimResults = true;
-    Z.rec = rec; zSet('armed', 'asleep · say “Hey Zero”');
+    Z.rec = rec; zSet('armed', 'asleep · say “Hey Pepper”');
     rec.onresult = (e) => {
       for (let k = e.resultIndex; k < e.results.length; k++) {
         const t = e.results[k][0].transcript.toLowerCase();
-        const m = t.match(/\b(?:hey|hi|ok|okay|yo)[,\s]+(?:zero|xero|hero|zeero|ziro)\b(.*)/);
+        const m = t.match(/\b(?:hey|hi|ok|okay|yo)[,\s]+(?:pepper|peppa|pepa|pepper's)\b(.*)/);
         if (m) { Z.wakeText = m[1].trim() || null; rec.onend = null; try { rec.stop(); } catch {} Z.rec = null; wake(); return; }
       }
     };
@@ -702,7 +702,7 @@
   function disarm() { if (Z.rec) { Z.rec.onend = null; try { Z.rec.stop(); } catch {} Z.rec = null; } }
 
   async function wake(headsUp) {
-    if (Z.state === 'live' || Z.state === 'connecting') { if (headsUp) fetch(`/api/zero/heads/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: headsUp }) }); return; }
+    if (Z.state === 'live' || Z.state === 'connecting') { if (headsUp) fetch(`/api/pepper/heads/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: headsUp }) }); return; }
     disarm(); $('#zero').hidden = false; zSet('connecting', 'waking up…');
     try {
       const pc = new RTCPeerConnection(); Z.pc = pc;
@@ -714,8 +714,8 @@
       for (const tr of Z.mic.getTracks()) pc.addTrack(tr, Z.mic);
       meter(Z.mic, 'user');
       await pc.setLocalDescription(await pc.createOffer());
-      await new Promise((ok) => { if (pc.iceGatheringState === 'complete') ok(); pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && ok(); setTimeout(ok, 2500); });
-      const r = await fetch('/api/zero/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sdp: pc.localDescription.sdp }) });
+      await new Promise((ok) => { if (pc.iceGatheringState === 'complete') ok(); pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && ok(); setTimeout(ok, 400); });   // OpenAI is ICE-lite: host candidates are enough
+      const r = await fetch('/api/pepper/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sdp: pc.localDescription.sdp }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'could not start');
       Z.id = d.id;
@@ -724,13 +724,13 @@
       Z.lastHeard = Date.now(); zSet('live', 'listening · talk any time');
       pushScreen(); Z.screenTimer = setInterval(pushScreen, 2000);
       Z.idle = setInterval(() => { if (!Z.working && Date.now() - Z.lastHeard > 45000) sleep('quiet for a while'); }, 5000);
-      if (headsUp) setTimeout(() => fetch(`/api/zero/heads/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: headsUp }) }), 600);
+      if (headsUp) setTimeout(() => fetch(`/api/pepper/heads/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: headsUp }) }), 600);
     } catch (e) {
-      zLine('a do', 'Could not wake Zero: ' + e.message); teardown(); zSet('off', 'asleep'); setTimeout(armWake, 1500);
+      zLine('a do', 'Could not wake Pepper: ' + e.message); teardown(); zSet('off', 'asleep'); setTimeout(armWake, 1500);
     }
   }
   function listenEvents(id) {
-    const es = new EventSource(`/api/zero/events/${id}`); Z.es = es;
+    const es = new EventSource(`/api/pepper/events/${id}`); Z.es = es;
     es.onmessage = async (m) => {
       const e = JSON.parse(m.data);
       if (e.type === 'transcript') {
@@ -742,6 +742,7 @@
         if (e.role === 'user') { Z.turnZ = (Z.turnZ || 0) + 0; if (/\b(go to sleep|that'?s all|goodbye|good night|stop listening)\b/i.test(zCap.lastElementChild.textContent)) setTimeout(() => sleep('asked to sleep'), 2500); }
       } else if (e.type === 'ui') { await applyUi(e.tool, e.args || {}); pushScreen(); }
       else if (e.type === 'tool') { zLine('a', '· ' + e.tool.replace(/_/g, ' ')); }
+      else if (e.type === 'thought') { zLine('a', '… ' + e.text); }
       else if (e.type === 'action') { zLine('a do', '! ' + e.tool.replace(/_/g, ' ') + ' ' + (e.args.host || e.args.session || e.args.title || '')); }
       else if (e.type === 'working') { Z.working = e.on; Z.lastHeard = Date.now(); zSet(Z.state, e.on ? 'checking the graph…' : 'listening · talk any time'); }
       else if (e.type === 'error') zLine('a do', e.text);
@@ -759,7 +760,7 @@
     }
     return _zl(cls, text, merge);
   };
-  function pushScreen() { if (Z.id) fetch(`/api/zero/screen/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(screenContext()) }).catch(() => {}); }
+  function pushScreen() { if (Z.id) fetch(`/api/pepper/screen/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(screenContext()) }).catch(() => {}); }
   // Orb reacts to whoever is speaking.
   function meter(stream, who) {
     try {
@@ -783,7 +784,7 @@
   async function sleep(reason) {
     if (Z.state === 'off' || Z.state === 'armed') return;
     const id = Z.id; Z.id = null; teardown(); Z.working = false;
-    if (id) fetch(`/api/zero/close/${id}`, { method: 'POST' }).catch(() => {});
+    if (id) fetch(`/api/pepper/close/${id}`, { method: 'POST' }).catch(() => {});
     zLine('a', `— asleep${reason ? ' (' + reason + ')' : ''}`);
     zSet('off', 'asleep'); armWake();
   }
@@ -802,11 +803,11 @@
   $('#zAlerts').onchange = () => { try { localStorage.setItem('zAlerts', $('#zAlerts').checked ? 'on' : 'off'); } catch {} };
   try { if (localStorage.getItem('zWake') === 'off') $('#zWake').checked = false; if (localStorage.getItem('zAlerts') === 'off') $('#zAlerts').checked = false; } catch {}
   window.addEventListener('keydown', (e) => { if (!$('#zero').hidden && e.code === 'Space' && e.target === document.body) { e.preventDefault(); $('#zTalk').click(); } });
-  // New critical/high alert from the change log: navigate, and wake Zero to say it.
+  // New critical/high alert from the change log: navigate, and wake Pepper to say it.
   function onAlert(c) {
     if ($('#zero').hidden || !$('#zAlerts').checked) return;
     zLine('a do', `new ${c.alert.severity} alert on ${c.device}`);
-    if (Z.state === 'live') return;   // the server already handed Zero the heads-up
+    if (Z.state === 'live') return;   // the server already handed Pepper the heads-up
     applyUi('focus_alert', { device: c.device, alert_id: c.alert.id });
     if (Z.state === 'armed') wake(c.text);
   }
