@@ -87,7 +87,17 @@ export async function details(ids) {
   for (const id of ids.slice(0, 10)) {
     try {
       const r = await fetch(`https://api.osv.dev/v1/vulns/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(8000) });
-      if (r.ok) { const v = await r.json(); out.push({ id: v.id, summary: (v.summary || v.details || '').slice(0, 160), severity: sevOf(v) }); }
+      if (r.ok) {
+        const v = await r.json();
+        const fixed = [], introduced = [];
+        for (const a of v.affected || []) for (const rg of a.ranges || []) for (const ev of rg.events || []) { if (ev.fixed) fixed.push(ev.fixed); if (ev.introduced) introduced.push(ev.introduced); }
+        out.push({
+          id: v.id, severity: sevOf(v), summary: (v.summary || v.details || '').slice(0, 240), details: (v.details || '').slice(0, 1200),
+          aliases: (v.aliases || []).filter((x) => /^CVE-/.test(x)).slice(0, 5), cvss: ((v.severity || []).find((x) => /CVSS/i.test(x.type)) || {}).score || '',
+          fixed: [...new Set(fixed)].slice(0, 5), introduced: [...new Set(introduced)].slice(0, 5), published: v.published, modified: v.modified,
+          url: `https://osv.dev/vulnerability/${encodeURIComponent(v.id)}`,
+        });
+      }
     } catch { /* keep going */ }
   }
   return out;

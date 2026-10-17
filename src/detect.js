@@ -84,8 +84,11 @@ export const RULES = [
     title: 'Agent tree installed packages',
     cypher: `
       MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[ex:EXECUTED]->(f:File {installer: true})
+      OPTIONAL MATCH (p)-[:INSTALLED]->(k:Package)
+      WITH p, f, ex, collect({package: k.name, ecosystem: k.ecosystem, version: k.version, vuln_count: k.vuln_count, worst: k.worst, checked: k.osv_checked}) AS pk
       RETURN p, f, ex, [p, f] AS pn, [ex] AS pr,
-             p.name + ' ran ' + ex.argv + (CASE WHEN ex.allowed THEN '' ELSE ' (refused)' END) AS summary
+             p.name + ' ran ' + ex.argv + (CASE WHEN ex.allowed THEN '' ELSE ' (refused)' END) AS summary,
+             [x IN pk WHERE x.package IS NOT NULL] AS evidence
       ORDER BY ex.ts DESC LIMIT 20`,
   },
   {
@@ -98,7 +101,9 @@ export const RULES = [
       WITH p, k, ins, collect(v) AS vs, collect(hv) AS hvs
       WHERE size(vs) > 0
       RETURN p, k, ins, ([p, k] + vs) AS pn, ([ins] + hvs) AS pr,
-             p.name + ' installed ' + k.ecosystem + ':' + k.name + '@' + k.version + ' with ' + toString(size(vs)) + ' OSV advisories (worst: ' + k.worst + ')' AS summary
+             p.name + ' installed ' + k.ecosystem + ':' + k.name + '@' + k.version + ' with ' + toString(size(vs)) + ' OSV advisories (worst: ' + k.worst + ')' AS summary,
+             [v IN vs | {id: v.id, severity: v.severity, summary: v.summary, cvss: v.cvss, fixed: v.fixed, aliases: v.aliases, url: v.url}] AS evidence,
+             {package: k.name, ecosystem: k.ecosystem, version: k.version, worst: k.worst} AS subject
       ORDER BY ins.ts DESC LIMIT 20`,
   },
   {
@@ -209,12 +214,13 @@ export async function detect(session) {
       const pr = (row.pr || []).map((e) => e.id);
       // Extra nodes/edges returned outside the path (f, h, out, rd, wr, cn...)
       for (const [k, v] of Object.entries(row)) {
-        if (k === 'pn' || k === 'pr' || k === 'summary' || v == null || typeof v !== 'object') continue;
+        if (k === 'pn' || k === 'pr' || k === 'summary' || k === 'evidence' || k === 'subject' || v == null || typeof v !== 'object') continue;
         if ('labels' in v) pn.push(v.id);
         else if ('relationshipType' in v) pr.push(v.id);
       }
       alerts.push({
         rule: rule.id, threat: rule.threat, threatName: THREATS[rule.threat], severity: rule.severity, title: rule.title, summary: row.summary,
+        evidence: row.evidence || undefined, subject: row.subject || undefined,
         nodes: [...new Set(pn)], edges: [...new Set(pr)],
       });
     }

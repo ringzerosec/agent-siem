@@ -229,9 +229,11 @@ async function recordPackages(key, ts, pkgs) {
     for (const v of (p.vulns || []).slice(0, 25)) {
       await graph.query(
         `MATCH (k:Package {name: $name, ecosystem: $eco, version: $version})
-         MERGE (v:Vulnerability {id: $id}) ON CREATE SET v.summary = $summary, v.severity = $severity
+         MERGE (v:Vulnerability {id: $id})
+           ON CREATE SET v.summary = $summary, v.severity = $severity, v.details = $details, v.aliases = $aliases, v.cvss = $cvss,
+                         v.fixed = $fixed, v.introduced = $introduced, v.published = $published, v.url = $url
          MERGE (k)-[:HAS_VULN]->(v)`,
-        { params: { name: p.name, eco: p.ecosystem, version: p.version || '*', id: v.id, summary: v.summary, severity: v.severity } },
+        { params: { name: p.name, eco: p.ecosystem, version: p.version || '*', id: v.id, summary: v.summary || '', severity: v.severity || 'unknown', details: v.details || '', aliases: (v.aliases || []).join(','), cvss: v.cvss || '', fixed: (v.fixed || []).join(','), introduced: (v.introduced || []).join(','), published: v.published || '', url: v.url || `https://osv.dev/vulnerability/${v.id}` } },
       );
     }
   }
