@@ -139,6 +139,13 @@
   #zero .cap .hint i { font-style: normal; color: var(--foreground); }
   #zero .zf { display: flex; gap: 14px; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted-foreground); }
   #zero .zf label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+  /* Minimised: a pill with the orb, state and Zero's latest line; click to expand. */
+  #zero.min { width: min(340px, calc(100vw - 32px)); border-radius: 999px; cursor: pointer; }
+  #zero.min .cap, #zero.min .zf, #zero.min #zMin, #zero.min #zClose { display: none; }
+  #zero.min .zt { padding: 8px 10px 8px 8px; gap: 10px; }
+  #zero.min .orb { width: 34px; height: 34px; }
+  #zero.min .zs b { display: none; }
+  #zero.min .zs span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--foreground); font-size: 12.5px; }
   #triage .running { padding: 10px 14px; color: var(--muted-foreground); font-size: 12px; }
   .badge.contained { background: rgba(1,105,111,.10); color: var(--primary); border-color: transparent; }
 
@@ -348,7 +355,7 @@
 <section id="zero" hidden aria-label="Zero, voice assistant">
   <div class="zt"><div class="orb off" id="zOrb"></div>
     <div class="zs"><b>Zero</b><span id="zState">asleep</span></div>
-    <div class="zb"><button class="btn sm primary" id="zTalk">Talk</button><button class="btn sm" id="zClose" aria-label="Close">×</button></div></div>
+    <div class="zb"><button class="btn sm primary" id="zTalk">Talk</button><button class="btn sm" id="zMin" aria-label="Minimise" title="Minimise (Zero keeps listening)">–</button><button class="btn sm" id="zClose" aria-label="Close" title="Close and sleep">×</button></div></div>
   <div class="cap" id="zCap" aria-live="polite"><div class="hint">Say <i>“Hey Zero”</i> or press <i>Talk</i>. Talk naturally and interrupt any time. Try <i>“What should I worry about?”</i>, <i>“Show me why the ML Research laptop is red.”</i>, <i>“Did that key go anywhere else?”</i>, <i>“Go to sleep.”</i></div></div>
   <div class="zf"><label><input type="checkbox" id="zWake" checked> listen for “Hey Zero”</label><label><input type="checkbox" id="zAlerts" checked> speak up on new alerts</label></div>
 </section>
@@ -728,7 +735,10 @@
       const e = JSON.parse(m.data);
       if (e.type === 'transcript') {
         Z.lastHeard = Date.now();
-        zLine(e.role === 'user' ? 'u' : 'z', e.text, e.role + ':' + (e.role === 'user' ? Z.turnU : Z.turnZ));
+        const said = e.text.replace(/\[[^\]]{1,24}\]\s*/g, '');   // drop nonverbal tags like [gulp]
+        if (!said) return;
+        zLine(e.role === 'user' ? 'u' : 'z', said, e.role + ':' + (e.role === 'user' ? Z.turnU : Z.turnZ));
+        if (e.role !== 'user' && $('#zero').classList.contains('min')) { Z.lastLine = (zCap.lastElementChild?.textContent || '').trim(); $('#zState').textContent = Z.lastLine.slice(-120); }
         if (e.role === 'user') { Z.turnZ = (Z.turnZ || 0) + 0; if (/\b(go to sleep|that'?s all|goodbye|good night|stop listening)\b/i.test(zCap.lastElementChild.textContent)) setTimeout(() => sleep('asked to sleep'), 2500); }
       } else if (e.type === 'ui') { await applyUi(e.tool, e.args || {}); pushScreen(); }
       else if (e.type === 'tool') { zLine('a', '· ' + e.tool.replace(/_/g, ' ')); }
@@ -779,6 +789,14 @@
   }
   $('#zeroBtn').onclick = () => { const h = $('#zero').hidden; $('#zero').hidden = !h; if (h && Z.state === 'off') armWake(); };
   $('#zTalk').onclick = () => (Z.state === 'live' || Z.state === 'connecting' ? sleep('') : wake());
+  function setMin(on) {
+    $('#zero').classList.toggle('min', on);
+    try { localStorage.setItem('zMin', on ? 'on' : 'off'); } catch {}
+    if (!on) zSet(Z.state, Z.state === 'live' ? (Z.working ? 'checking the graph…' : 'listening · talk any time') : $('#zState').textContent);
+  }
+  $('#zMin').onclick = (e) => { e.stopPropagation(); setMin(true); };
+  $('#zero').addEventListener('click', (e) => { if ($('#zero').classList.contains('min') && !e.target.closest('#zTalk')) setMin(false); });
+  try { if (localStorage.getItem('zMin') === 'on') $('#zero').classList.add('min'); } catch {}
   $('#zClose').onclick = () => { $('#zero').hidden = true; sleep(''); disarm(); zSet('off', 'asleep'); };
   $('#zWake').onchange = () => { try { localStorage.setItem('zWake', $('#zWake').checked ? 'on' : 'off'); } catch {} if ($('#zWake').checked) armWake(); else if (Z.state === 'armed') { disarm(); zSet('off', 'asleep'); } };
   $('#zAlerts').onchange = () => { try { localStorage.setItem('zAlerts', $('#zAlerts').checked ? 'on' : 'off'); } catch {} };
