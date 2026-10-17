@@ -97,6 +97,26 @@ app.get('/api/feed/:device', async (req, res, next) => {
 
 app.get('/api/threats', (_req, res) => res.json(THREATS));
 
+// Remove one device and everything under it (sessions, processes, their
+// files/hosts/tools are kept if another device touched them too).
+app.delete('/api/device/:id', async (req, res, next) => {
+  try {
+    await g().query(
+      `MATCH (d:Device {id: $id})
+       OPTIONAL MATCH (d)-[:RUNS]->(s:Session)
+       OPTIONAL MATCH (s)-[:HAS]->(p:Process)
+       OPTIONAL MATCH (p)-[:PROMPTED]->(q:Prompt)
+       OPTIONAL MATCH (s)-[:NOTED]->(n:Note)
+       OPTIONAL MATCH (d)-[:DECLARES]->(m:McpServer)
+       DETACH DELETE q, n, m, p, s, d`,
+      { params: { id: req.params.id } },
+    );
+    await g().query('MATCH (x) WHERE (x:File OR x:Host OR x:McpTool OR x:Package OR x:Tamper) AND NOT (x)--() DELETE x');
+    broadcast({ type: 'reset' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 app.post('/api/reset', async (_req, res, next) => {
   try { await wipe(); broadcast({ type: 'reset' }); res.json({ ok: true }); } catch (e) { next(e); }
 });
@@ -112,7 +132,7 @@ app.get('/api/devices', async (_req, res, next) => {
        WITH d, count(DISTINCT s) AS sessions, count(DISTINCT p) AS procs, count(e) AS actions, max(e.ts) AS last,
             collect(DISTINCT s.agent) AS agents
        RETURN d.id AS id, d.owner AS owner, d.simulated AS simulated, sessions, procs, actions, last, agents
-       ORDER BY d.simulated, d.id`,
+       ORDER BY d.simulated, coalesce(last, 0) DESC, d.id`,
       { params: { since: Date.now() - Number(process.env.GRAPH_WINDOW_HOURS || 24) * 3600 * 1000 } },
     );
     const out = [];

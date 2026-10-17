@@ -92,6 +92,8 @@
   .tile .owner { font-weight: 600; font-size: 13px; }
   .tile .dev { font-family: var(--mono); font-size: 11px; color: var(--muted-foreground); }
   .tile.sim .dev { font-style: italic; }
+  .tile.idle { opacity: .55; }
+  .tile.idle.crit, .tile.idle.high { animation: none; box-shadow: none; }
   .tile .hd .badge { margin-left: auto; }
   .tile .agents { position: absolute; top: 34px; left: 12px; font-size: 10.5px; color: var(--muted-foreground); font-family: var(--mono); z-index: 2; pointer-events: none; }
   .tile .ft { position: absolute; bottom: 0; left: 0; right: 0; padding: 8px 12px; font-size: 11px; color: var(--muted-foreground); z-index: 2; pointer-events: none; background: linear-gradient(transparent, var(--card) 40%); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -351,6 +353,9 @@
       const cls = d.critical ? 'crit' : d.high ? 'high' : '';
       if (cls === 'crit' && !t.el.classList.contains('crit')) { t.el.style.animation = 'none'; void t.el.offsetWidth; t.el.style.animation = ''; }
       t.el.classList.remove('crit', 'high'); if (cls) t.el.classList.add(cls);
+      t.el.classList.toggle('idle', !d.actions);
+      if (!d.actions) t.el.querySelector('.ft').innerHTML = `<span class="dim">idle · no activity in the last 24 h${d.alerts ? ' · ' + d.alerts + ' past alert' + (d.alerts > 1 ? 's' : '') : ''}</span>`;
+      wall.appendChild(t.el);   // re-append in server order: active first, idle last
       if (!onlyDevices || onlyDevices.has(d.id) || t.had === 0) refreshTile(d.id, t, d);
     }
     $('#statDevices').innerHTML = `<b>${devices.length}</b><span>devices</span>`;
