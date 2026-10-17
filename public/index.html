@@ -504,7 +504,7 @@
   const q = (path) => path + (path.includes('?') ? '&' : '?') + rangeQS();
 
   // ---- icons: inline SVG → data URI, one per node kind -------------------
-  const svg = (body, bg) => 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="31" fill="${bg}"/>${body}</svg>`);
+  const svg = (body, bg) => 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64"><circle cx="32" cy="32" r="31" fill="${bg}"/>${body}</svg>`);
   const INK = '#ffffff';
   const ICON = {
     skill:    svg(`<path d="M20 22h8a4 4 0 1 1 8 0h8v8a4 4 0 1 1 0 8v8H36a4 4 0 1 0-8 0h-8v-8a4 4 0 1 0 0-8z" fill="${INK}"/>`, '#0f766e'),
@@ -561,7 +561,7 @@
     for (const a of alerts) { a.nodes.forEach((id) => onPath.add(id)); a.edges.forEach((id) => onEdge.add(id)); }
     const nb = css('--node-border'), edge = css('--edge'), lab = css('--label'), labbg = css('--label-bg');
     const vnodes = nodes.map((n) => ({
-      id: n.id, label: mini ? undefined : label(n), shape: 'circularImage', image: icon(n),
+      id: n.id, label: mini ? undefined : label(n), shape: 'circularImage', image: icon(n), shapeProperties: { interpolation: false },
       size: mini ? (n.labels.includes('Process') ? 9 : 7) : (n.labels.includes('Process') ? 20 : 15),
       color: onPath.has(n.id)
         ? { border: '#dc2626', background: '#dc2626', highlight: { border: '#0a0a0a', background: '#dc2626' } }
@@ -1295,10 +1295,10 @@
       add({ id: 'f:' + f.id, label: f.title.length > 38 ? f.title.slice(0, 36) + '…' : f.title, shape: 'dot', size: 9, color: f.severity === 'critical' ? '#dc2626' : '#d97706', font: { ...font, size: 10 } });
       edges.push({ from: 'd:' + f.device, to: 'f:' + f.id, color: { color: '#cbd5e1' } });
     }
-    for (const h of c.indicators.hosts) add({ id: 'h:' + h, label: h, shape: 'circularImage', image: ICON.badhost, size: 16, font });
+    for (const h of c.indicators.hosts) add({ id: 'h:' + h, label: h, shape: 'circularImage', image: ICON.badhost, shapeProperties: { interpolation: false }, size: 16, font });
     for (const ip of c.indicators.ips) add({ id: 'i:' + ip, label: ip, shape: 'diamond', size: 10, color: '#7c3aed', font });
-    for (const sk of c.indicators.skills) add({ id: 's:' + sk, label: 'skill: ' + sk, shape: 'circularImage', image: ICON.badskill, size: 16, font });
-    for (const t of c.indicators.mcp_tools) add({ id: 't:' + t, label: t, shape: 'circularImage', image: ICON.badtool, size: 16, font });
+    for (const sk of c.indicators.skills) add({ id: 's:' + sk, label: 'skill: ' + sk, shape: 'circularImage', image: ICON.badskill, shapeProperties: { interpolation: false }, size: 16, font });
+    for (const t of c.indicators.mcp_tools) add({ id: 't:' + t, label: t, shape: 'circularImage', image: ICON.badtool, shapeProperties: { interpolation: false }, size: 16, font });
     // Findings to the indicators their summaries mention; hosts to their IPs.
     for (const f of c.devices_findings) {
       for (const h of c.indicators.hosts) edges.push({ from: 'f:' + f.id, to: 'h:' + h, color: { color: 'rgba(220,38,38,.35)' } });
