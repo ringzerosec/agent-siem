@@ -127,8 +127,8 @@ export async function ingestEvent(ev) {
 
   await graph.query(
     `MERGE (d:Device {id: $device})
-       ON CREATE SET d.first_ts = $ts, d.simulated = $simulated
-     SET d.owner = coalesce($owner, d.owner)
+     SET d.owner = coalesce($owner, d.owner), d.first_ts = coalesce(d.first_ts, $ts),
+         d.simulated = CASE WHEN $simulated THEN true ELSE coalesce(d.simulated, false) END
      MERGE (s:Session {id: $session})
        ON CREATE SET s.agent = $agent, s.started = $ts, s.device = $device
      SET s.agent = coalesce(s.agent, $agent), s.device = coalesce(s.device, $device), s.state = coalesce($state, s.state), s.privileged = coalesce($priv, s.privileged), s.privileged_reason = coalesce($preason, s.privileged_reason)
