@@ -140,7 +140,11 @@ export async function approveDecision(id, { only, actor = 'security-engineer' } 
     for (const p of d.proposals) {
       if (only && !only.includes(p.type)) continue;
       if (p.type === 'escalate_to_owner') results.push(await sendEscalation(d, p.args));
-      else if (p.type === 'block_host') { const r = await client.callTool({ name: 'block_host', arguments: { ...p.args, alert_id: d.alert } }); results.push({ type: p.type, ok: !r.isError, detail: r.content?.[0]?.text?.slice(0, 300) }); }
+      else if (['block_host', 'open_ticket', 'contain_session'].includes(p.type)) {
+        const args = { ...p.args, ...(d.alert ? { alert_id: d.alert } : {}) };
+        const r = await client.callTool({ name: p.type, arguments: args });
+        results.push({ type: p.type, ok: !r.isError, status: r.isError ? 'failed' : 'done', detail: r.content?.[0]?.text?.slice(0, 300) });
+      }
     }
   } finally { await client.close(); await server.close(); }
   await g().query(`MATCH (x:Decision {id: $id}) SET x.status = 'approved', x.decided_at = $ts, x.decided_by = $actor, x.results = $results`,

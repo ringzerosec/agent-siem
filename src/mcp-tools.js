@@ -45,8 +45,13 @@ async function findAlert(device, alertId) {
 
 async function recordAction({ device, alertId, type, target, reason, by }) {
   const ts = Date.now();
-  const r = await g().query(
-    `MERGE (d:Device {id: $device})
+  // Fleet-wide actions (device "*") hang off a single (:Fleet) node, not a fake device.
+  const r = await g().query(device === '*'
+    ? `MERGE (d:Fleet {id: 'fleet'})
+       CREATE (a:Action {type: $type, target: $target, reason: $reason, by: $by, alert: $alertId, device: $device, ts: $ts, status: 'queued'})
+       CREATE (d)-[:ACTION]->(a)
+       RETURN ID(a) AS id`
+    : `MERGE (d:Device {id: $device})
      CREATE (a:Action {type: $type, target: $target, reason: $reason, by: $by, alert: $alertId, device: $device, ts: $ts, status: 'queued'})
      CREATE (d)-[:ACTION]->(a)
      RETURN ID(a) AS id`,
@@ -288,6 +293,35 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
     inputSchema: { device: z.string(), alert_id: z.string(), reason: z.string() },
   }, async ({ device, alert_id, reason }) => text(await recordAction({ device, alertId: alert_id, type: 'false_positive', target: alert_id, reason, by: actor })));
 
+  server.registerTool('run_deep_scan', {
+    title: 'Deep scan the fleet',
+    description: 'Start a discovery scan on every endpoint (or the listed ones): the Ring Zero Security daemon on each runs its skill scanner, non-human identity scan, health and posture checks, supply-chain and compliance self-assessment, and the results land in the graph. Returns a job id; use scan_status to follow it, then fleet_inventory / propose_policies / iso42001_readiness.',
+    inputSchema: { devices: z.array(z.string()).optional() },
+  }, async ({ devices }) => { const { startDeepScan } = await import('./governance.js'); return text(await startDeepScan(devices)); });
+
+  server.registerTool('scan_status', {
+    title: 'Deep scan status', description: 'Progress of a deep scan job: how many endpoints reported, which are still pending.',
+    inputSchema: { job: z.string() },
+  }, async ({ job }) => { const { scanStatus } = await import('./governance.js'); return text(await scanStatus(job)); });
+
+  server.registerTool('fleet_inventory', {
+    title: 'Fleet inventory and posture',
+    description: 'Per endpoint: owner, agents, AI services (approved or shadow), unregistered agents, MCP servers (untrusted count), skills (flagged count), and the posture from the last deep scan (enforce mode, kernel monitoring, daemon health, non-human identities, supply chain, the endpoint\'s compliance self-assessment).',
+    inputSchema: {},
+  }, async () => { const { fleetInventory } = await import('./governance.js'); return text({ endpoints: (await fleetInventory()).map((d) => ({ ...d, posture: d.posture ? { enforce_mode: d.posture.enforce_mode, kernel_monitoring: d.posture.kernel_monitoring, health: d.posture.health, health_issues: d.posture.health_issues, nhi_count: d.posture.nhi_count, scanned_at: d.posture.scanned_at } : null })) }); });
+
+  server.registerTool('propose_policies', {
+    title: 'Propose policies',
+    description: 'Turn what the fleet inventory shows into policy proposals in the decision inbox (block unapproved AI services fleet-wide, remove untrusted MCP servers, quarantine flagged skills, register unregistered agents, turn on enforce mode). Nothing is applied until someone approves each decision.',
+    inputSchema: {},
+  }, async () => { const { proposePolicies } = await import('./governance.js'); return text(await proposePolicies()); });
+
+  server.registerTool('iso42001_readiness', {
+    title: 'ISO/IEC 42001 readiness',
+    description: 'Evidence from the graph mapped to the ISO/IEC 42001 Annex A areas (policies, organization, inventory of AI resources, impact assessment, monitoring and logging, data, information for interested parties, use of AI, third-party relationships), each evidenced / partial / gap with the gaps to close. Evidence for an audit, not a certification.',
+    inputSchema: {},
+  }, async () => { const { iso42001 } = await import('./governance.js'); return text(await iso42001()); });
+
   server.registerTool('list_decisions', {
     title: 'Decision inbox',
     description: "Analyses autopilot finished on its own and the next steps it proposes (escalate to the employee who owns the endpoint, block a host), waiting for a yes. Pending first.",
@@ -331,5 +365,5 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 export const TOOL_KIND = {
   list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
-  block_host: 'action', contain_session: 'action', approve_decision: 'action', dismiss_decision: 'action', list_decisions: 'read', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
+  block_host: 'action', contain_session: 'action', approve_decision: 'action', dismiss_decision: 'action', list_decisions: 'read', run_deep_scan: 'action', scan_status: 'read', fleet_inventory: 'read', propose_policies: 'action', iso42001_readiness: 'read', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };

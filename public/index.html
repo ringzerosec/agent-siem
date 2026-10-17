@@ -68,7 +68,7 @@
   .spacer { flex: 1; }
   /* 21st Statistics Card, compressed into a header strip */
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card); }
-  .seg button { border: 0; background: transparent; color: var(--muted-foreground); font: 500 12px var(--sans); padding: 0 10px; height: 32px; cursor: pointer; border-left: 1px solid var(--border); }
+  .seg button { border: 0; background: transparent; color: var(--muted-foreground); font: 500 12px var(--sans); padding: 0 10px; height: 32px; cursor: pointer; border-left: 1px solid var(--border);  white-space: nowrap;}
   .seg button:first-child { border-left: 0; }
   .seg button.on { background: var(--teal-light); color: var(--teal); }
   .stats { display: flex; gap: 8px; }
@@ -131,6 +131,19 @@
   .dec .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
   .dec.done { opacity: .6; }
   #inboxCount.on { background: var(--destructive); color: #fff; border-color: transparent; }
+  /* Governance */
+  #gov { padding: 16px 20px; overflow: auto; }
+  .gov-actions { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .gov-grid { display: grid; grid-template-columns: minmax(360px, 520px) 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 1000px) { .gov-grid { grid-template-columns: 1fr; } }
+  .iso { padding: 10px 14px; border-top: 1px solid var(--border); }
+  .iso .ih2 { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .iso .ih2 b { font: 600 12px var(--mono); color: var(--muted-foreground); width: 38px; }
+  .iso .ih2 span.nm { flex: 1; font-weight: 600; }
+  .iso ul { margin: 6px 0 0 46px; padding: 0; font-size: 12px; color: var(--muted-foreground); line-height: 1.5; }
+  .iso ul.gaps li { color: #b45309; }
+  #invTable td { white-space: normal; font-size: 12px; }
+  #invTable .bad { color: #b91c1c; font-weight: 600; }
   /* AI usage */
   #ai { padding: 16px 20px; overflow: auto; }
   .ai-stats { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -319,12 +332,17 @@
   .tl .ts { color: var(--muted-foreground); }
   .node .actions { display: flex; gap: 8px; margin: 8px 0 12px; flex-wrap: wrap; }
   @media (max-width: 1000px) { #detail { grid-template-columns: 1fr; grid-template-rows: 52vh 1fr; } #canvas { border-right: 0; border-bottom: 1px solid var(--border); } }
+  /* Header fits one row at laptop widths */
+  header { gap: 10px !important; flex-wrap: nowrap; }
+  header .brand, header h1, header .sub, header .stats, #range { white-space: nowrap; flex-shrink: 0; }
+  @media (max-width: 1500px) { header .stat { padding: 4px 8px; } header .stat b { font-size: 15px; } .seg button { padding: 0 8px; } #live { display: none; } }
+  @media (max-width: 1300px) { header .stat span { display: none; } }
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><div class="mark">R0</div><div><h1>Agent SIEM</h1><div class="sub">Ring Zero Security</div></div></div>
-  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button><button data-v="campaigns">Campaigns</button><button data-v="ai">AI usage</button></div>
+  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button><button data-v="campaigns">Campaigns</button><button data-v="ai">AI usage</button><button data-v="gov">Governance</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
   <button class="btn sm" id="inboxBtn" title="Analyses autopilot finished, waiting for your yes">Inbox <span class="badge outline" id="inboxCount">0</span></button>
@@ -351,6 +369,14 @@
   <div class="camp-top"><div><h2>AI usage</h2><p>Every AI service the fleet talks to, recognized by what the traffic says (OpenAI, Anthropic, Gemini, Bedrock and Ollama request and response shapes: paths, body keys like <code>messages</code> and <code>max_tokens</code>, streaming), not only by hostname. That finds gateways, proxies, self-hosted models and scripts nobody registered as an agent.</p></div></div>
   <div class="ai-stats" id="aiStats"></div>
   <div class="card"><table class="tbl" id="aiTable"><thead><tr><th>Service</th><th>Provider</th><th>Status</th><th>Endpoints</th><th>Callers</th><th>Calls</th><th>Models</th><th>Last</th></tr></thead><tbody></tbody></table></div>
+</div>
+<div id="gov" hidden>
+  <div class="camp-top"><div><h2>Governance</h2><p>Discover what every endpoint runs (agents, AI services, MCP servers, skills, identities, posture), turn it into policy proposals that wait for a yes, and map the evidence to ISO/IEC 42001. Evidence for an audit, not a certification.</p></div></div>
+  <div class="gov-actions"><button class="btn primary" id="govScan">Deep scan fleet</button><button class="btn" id="govPropose">Propose policies</button><span class="dim" id="govStatus"></span></div>
+  <div class="gov-grid">
+    <div class="card"><div class="card-header"><h2 class="sec">ISO/IEC 42001 readiness</h2><span class="badge outline" id="isoScore">–</span></div><div id="isoAreas"></div></div>
+    <div class="card"><div class="card-header"><h2 class="sec">Fleet inventory and posture</h2></div><table class="tbl" id="invTable"><thead><tr><th>Endpoint</th><th>Owner</th><th>Agents</th><th>AI</th><th>MCP</th><th>Skills</th><th>Posture</th><th>Scanned</th></tr></thead><tbody></tbody></table></div>
+  </div>
 </div>
 <div id="events" hidden>
   <div class="filters">
@@ -724,7 +750,7 @@
 
   // Screen tools, executed for the engineer.
   async function applyUi(tool, a) {
-    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns', show_ai_usage: 'opened AI usage', show_inbox: 'opened the inbox' }[tool] || tool;
+    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns', show_ai_usage: 'opened AI usage', show_inbox: 'opened the inbox', show_governance: 'opened governance' }[tool] || tool;
     zLine('a', '↳ ' + label);
     try {
       switch (tool) {
@@ -753,6 +779,7 @@
         case 'show_campaigns': setView('campaigns'); break;
         case 'show_ai_usage': setView('ai'); break;
         case 'show_inbox': $('#inbox').hidden = false; loadInbox(); break;
+        case 'show_governance': setView('gov'); break;
         case 'run_triage': setView('wall'); if (state.device !== a.device) await openDevice(a.device); investigate(a.alert_id); break;
       }
     } catch (e) { console.warn('ui tool', tool, e); }
@@ -1097,8 +1124,9 @@
   function setView(v) {
     view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
     if (v === 'events' && state.device) closeDevice();
-    if ((v === 'campaigns' || v === 'ai') && state.device) closeDevice();
-    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai';
+    if ((v === 'campaigns' || v === 'ai' || v === 'gov') && state.device) closeDevice();
+    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai'; $('#gov').hidden = v !== 'gov';
+    if (v === 'gov') loadGov();
     if (v === 'ai') loadAi();
     if (v === 'events') loadEvents();
     if (v === 'campaigns') loadCampaigns();
@@ -1137,6 +1165,31 @@
     zLine('a do', `analysis ready: ${c.decision.headline}`);
     if (Z.state === 'armed') wake(c.text);   // a live session already got it from the server
   }
+
+  // ---- governance --------------------------------------------------------------
+  async function loadGov() {
+    const [iso, inv] = await Promise.all([fetch('/api/governance/iso42001').then((r) => r.json()), fetch('/api/inventory').then((r) => r.json())]);
+    $('#isoScore').textContent = `${iso.readiness}% ready`;
+    $('#isoScore').className = 'badge ' + (iso.readiness >= 80 ? 'success' : iso.readiness >= 50 ? 'warning' : 'destructive');
+    const st = (x) => `<span class="badge ${x === 'evidenced' ? 'success' : x === 'partial' ? 'warning' : 'destructive'}">${esc(x)}</span>`;
+    $('#isoAreas').innerHTML = iso.areas.map((a) => `<div class="iso"><div class="ih2"><b>${esc(a.id)}</b><span class="nm">${esc(a.name)}</span>${st(a.status)}</div>
+      <ul>${a.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>${a.gaps.length ? `<ul class="gaps">${a.gaps.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}</div>`).join('') + `<div class="iso dim" style="font-size:11.5px">${esc(iso.note)}</div>`;
+    $('#invTable tbody').innerHTML = inv.map((d) => { const p = d.posture;
+      return `<tr><td><a href="#" data-dev="${esc(d.device)}">${esc(d.device)}</a>${d.simulated ? ' <span class="dim">sim</span>' : ''}</td><td>${esc(d.owner || '—')}<br><span class="dim">${esc(d.team || '')}</span></td>
+        <td>${esc(d.agents.filter(Boolean).join(', '))}${d.unregistered_agents.length ? `<br><span class="bad">+ ${esc(d.unregistered_agents.join(', '))} (unregistered)</span>` : ''}</td>
+        <td>${d.ai_services.length}${d.shadow_ai ? ` <span class="bad">${d.shadow_ai} shadow</span>` : ''}</td><td>${d.mcp}${d.untrusted_mcp ? ` <span class="bad">${d.untrusted_mcp} untrusted</span>` : ''}</td>
+        <td>${d.skills}${d.risky_skills ? ` <span class="bad">${d.risky_skills} flagged</span>` : ''}</td>
+        <td>${p && p.reachable === false ? '<span class="bad">daemon unreachable</span>' : p ? `${p.enforce_mode ? 'enforce' : '<span class="bad">watch only</span>'} · ${esc(p.kernel_monitoring || '?')}${p.nhi_count ? ` · ${p.nhi_count} identities` : ''}${p.health_issues.length ? `<br><span class="dim">${esc(p.health_issues.join('; '))}</span>` : ''}` : '<span class="dim">not scanned</span>'}</td>
+        <td>${p ? ago(p.scanned_at) : '—'}</td></tr>`; }).join('');
+    $('#invTable').querySelectorAll('[data-dev]').forEach((a) => a.onclick = (e) => { e.preventDefault(); setView('wall'); openDevice(a.dataset.dev); });
+  }
+  $('#govScan').onclick = async () => {
+    const r = await (await fetch('/api/scan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
+    $('#govStatus').textContent = `scan ${r.job}: ${r.endpoints} endpoints${r.real.length ? `, waiting for ${r.real.join(', ')}` : ''}…`;
+    for (let i = 0; i < 40; i++) { const st2 = await (await fetch(`/api/scan/${r.job}`)).json(); $('#govStatus').textContent = `scan ${r.job}: ${st2.done}/${st2.total} reported${st2.pending.length ? ` (waiting: ${st2.pending.join(', ')})` : ''}`; if (!st2.pending.length) break; await new Promise((ok) => setTimeout(ok, 2000)); }
+    loadGov();
+  };
+  $('#govPropose').onclick = async () => { const r = await (await fetch('/api/policies/propose', { method: 'POST' })).json(); $('#govStatus').textContent = `${r.created} new policy proposal${r.created === 1 ? '' : 's'} in the inbox (${r.proposals} total)`; loadInbox(); $('#inbox').hidden = false; loadInbox(); };
 
   // ---- AI usage / shadow AI --------------------------------------------------
   async function loadAi() {

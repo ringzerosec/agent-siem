@@ -125,6 +125,26 @@ async function scanSkills(t) {
   if (items.length) { await post('/api/skills', items); process.stdout.write(`${t.device}:skills ${items.length} `); }
 }
 
+// Deep scan commands from the console (GET /api/commands): run the daemon's
+// scanners and report back (POST /api/scan-results). All daemon calls here are
+// read-only (GET, or the read-only skill-scan POST).
+async function runCommands(t) {
+  const r = await fetch(`${API}/api/commands?devices=${encodeURIComponent(t.device)}`, { headers: AUTH, signal: AbortSignal.timeout(6000) });
+  if (!r.ok) return;
+  for (const c of await r.json()) {
+    if (c.type !== 'deep_scan') continue;
+    const safe = async (path) => { try { return await get(`${t.url}${path}`); } catch { return null; } };
+    lastSkillScan.delete(t.device); await scanSkills(t).catch(() => {});   // fresh skill scan
+    const results = {
+      source: 'daemon', status: await safe('/api/v1/status'), health: await safe('/api/v1/health/components'),
+      nhi: await safe('/api/v1/nhi'), supply_chain: await safe('/api/v1/supply-chain/summary'), compliance: await safe('/api/v1/compliance/summary'),
+    };
+    if (!results.status && !results.health) results.unreachable = true;   // daemon not answering: say so, don't fake a posture
+    await post('/api/scan-results', { command: c.id, device: t.device, results });
+    process.stdout.write(`${t.device}:deep-scan `);
+  }
+}
+
 const seen = new Map();  // device → Set of event ids already sent
 const sentNotes = new Map(); // session → last commentary seq
 const lastInv = new Map();   // device → last inventory sent (only resend on change)
@@ -146,6 +166,7 @@ async function pollDevice(t) {
   } catch (e) { if (!/404/.test(e.message)) console.error(`${t.device}: inventory: ${e.message}`); }
 
   try { await scanSkills(t); } catch (e) { console.error(`${t.device}: skill scan: ${e.message}`); }
+  try { await runCommands(t); } catch (e) { console.error(`${t.device}: commands: ${e.message}`); }
 
   let sessions = [];
   try { sessions = await get(`${t.url}/api/v1/sessions`); if (!Array.isArray(sessions)) sessions = sessions.sessions || []; } catch (e) { console.error(`${t.device}: sessions: ${e.message}`); }

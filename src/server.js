@@ -24,6 +24,7 @@ import { mountPepper, pepperHeadsUp } from './pepper.js';
 import { syncFindings, campaigns, indicatorIntel, backfillResolution } from './intel.js';
 import { aiUsage } from './aiusage.js';
 import { onFinding, onDecision, listDecisions, approveDecision, dismissDecision, setOwners } from './autopilot.js';
+import { startDeepScan, pendingCommands, storeScan, scanStatus, fleetInventory, proposePolicies, iso42001 } from './governance.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
@@ -261,6 +262,15 @@ app.post('/api/decisions/:id/approve', async (req, res, next) => { try { res.jso
 app.post('/api/decisions/:id/dismiss', async (req, res, next) => { try { res.json(await dismissDecision(req.params.id, String(req.body?.reason || ''), 'dashboard user')); } catch (e) { next(e); } });
 // Who owns each endpoint (for escalations): [{device, name, email, manager, team}]
 app.post('/api/owners', async (req, res, next) => { try { const rows = asArray(req.body); await setOwners(rows); res.json({ ok: rows.length }); } catch (e) { next(e); } });
+
+// Fleet discovery and governance (src/governance.js).
+app.post('/api/scan', async (req, res, next) => { try { res.json(await startDeepScan(req.body?.devices)); } catch (e) { next(e); } });
+app.get('/api/scan/:job', async (req, res, next) => { try { res.json(await scanStatus(req.params.job)); } catch (e) { next(e); } });
+app.get('/api/commands', async (req, res, next) => { try { res.json(await pendingCommands(String(req.query.devices || '').split(',').filter(Boolean))); } catch (e) { next(e); } });
+app.post('/api/scan-results', async (req, res, next) => { try { const b = req.body || {}; await storeScan(String(b.command || ''), String(b.device), b.results || {}); broadcast({ type: 'update', device: String(b.device) }); res.json({ ok: true }); } catch (e) { next(e); } });
+app.get('/api/inventory', async (_req, res, next) => { try { res.json(await fleetInventory()); } catch (e) { next(e); } });
+app.post('/api/policies/propose', async (_req, res, next) => { try { res.json(await proposePolicies()); } catch (e) { next(e); } });
+app.get('/api/governance/iso42001', async (_req, res, next) => { try { res.json(await iso42001()); } catch (e) { next(e); } });
 
 app.get('/api/bus', async (_req, res, next) => {
   try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }

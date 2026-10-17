@@ -62,13 +62,16 @@ const AI_SHADOW = [
 ];
 
 let eventSeq = 0;
+// Each run gets its own session ids: a restart must never reuse an old session
+// (its process ids would collide with processes already in the graph).
+const RUN = Date.now().toString(36).slice(-4);
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const now = () => Date.now();
 
 class Session {
   constructor(device, owner, n, agentIdx, profile = {}) {
     this.device = device; this.owner = owner; this.profile = profile;
-    this.id = `${device}-s${n}`;
+    this.id = `${device}-${RUN}-s${n}`;
     this.agent = AGENTS[agentIdx % AGENTS.length];
     this.rootPid = 1000 + n * 1000;
     this.nextPid = this.rootPid + 1;
@@ -167,7 +170,7 @@ class Session {
   tick() {
     this.step++;
     if (this.step > SESSION_LEN) {   // the run ended; a new session starts on the same device
-      this.n = (this.n || 1) + 1; this.id = `${this.device}-s${this.n}`; this.step = 1; this.drifted = false; this.drifts = Math.random() < 0.25; this.driftAt = 3 + Math.floor(Math.random() * 10);
+      this.n = (this.n || 1) + 1; this.id = `${this.device}-${RUN}-s${this.n}`; this.step = 1; this.drifted = false; this.drifts = Math.random() < 0.25; this.driftAt = 3 + Math.floor(Math.random() * 10);
       this.rootPid += 1000; this.nextPid = this.rootPid + 1;
     }
     if (this.drifts && !this.drifted && this.step >= this.driftAt) return this.drift();

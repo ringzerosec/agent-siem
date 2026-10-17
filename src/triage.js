@@ -88,7 +88,7 @@ async function runAgent(job, client, call) {
   const anthropic = new Anthropic();
   const { tools } = await client.listTools();
   // The triage agent investigates; it never approves or dismisses decisions (that is a human's yes).
-  const claudeTools = tools.filter((t) => !['approve_decision', 'dismiss_decision'].includes(t.name)).map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
+  const claudeTools = tools.filter((t) => !['approve_decision', 'dismiss_decision', 'run_deep_scan', 'propose_policies'].includes(t.name)).map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
   const messages = [{ role: 'user', content: `Triage alert ${job.alertId} on endpoint ${job.device}.` }];
   let model = MODEL;
   for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -154,6 +154,10 @@ async function runPlaybook(job, call) {
     // Shadow AI: data went to an AI service nobody approved. Not blocked today (the daemon can't recognize it yet).
     say(`Data went to ${aiOut.map((n) => `${n.provider} (${n.name})`).join(', ')}, which is not an approved AI service.`);
     verdict = 'true_positive_active';
+  } else if (refused.length && !allowedEgress.length) {
+    // The risky step itself (an untrusted MCP call, an upload) was refused.
+    say('The risky step was refused: the attempt is contained, no block needed.');
+    verdict = 'true_positive_contained';
   } else if (!egress.length && !secrets.length) {
     verdict = 'needs_human';
     say('No egress or secret on this path; leave it for a human with the context above.');
