@@ -22,6 +22,7 @@
 //   (Process)-[:USED_TOOL {ts, event, allowed}]->(McpTool)
 
 import { g } from './db.js';
+import { parseInstall, lookup } from './osv.js';
 
 const SENSITIVE = [
   /\/\.env($|\.)/, /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\/\.docker\/config\.json$/,
@@ -31,6 +32,18 @@ const SENSITIVE = [
 const INSTRUCTION_FILES = [/CLAUDE\.md$/, /AGENTS\.md$/, /\.cursorrules$/, /\/\.cursor\//, /\/\.claude\//, /SKILL\.md$/];
 const PRIVILEGED = new Set(['sudo', 'su', 'pkexec', 'doas', 'run0', 'systemd-run', 'at', 'batch', 'crontab']);
 const INSTALLERS = new Set(['pip', 'pip3', 'npm', 'npx', 'uv', 'cargo', 'apt', 'apt-get', 'brew', 'gem']);
+
+// Never store a secret value in the graph: prompts and notes pass through this.
+const SECRET_VALUES = [
+  /sk-[A-Za-z0-9_-]{16,}/g, /ghp_[A-Za-z0-9]{20,}/g, /gho_[A-Za-z0-9]{20,}/g, /xox[baprs]-[A-Za-z0-9-]{10,}/g,
+  /AKIA[0-9A-Z]{16}/g, /AIza[0-9A-Za-z_-]{30,}/g, /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  /(?:password|passwd|secret|token|api[_-]?key)\s*[=:]\s*["']?[^\s"']{6,}/gi, /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+];
+export function redact(text) {
+  let t = String(text || '').slice(0, 1500);
+  for (const r of SECRET_VALUES) t = t.replace(r, '[redacted]');
+  return t;
+}
 
 export function isSensitive(path) { return SENSITIVE.some((r) => r.test(path)); }
 export function isInstructionFile(path) { return INSTRUCTION_FILES.some((r) => r.test(path)); }
@@ -65,13 +78,14 @@ export async function ingestEvent(ev) {
        ON CREATE SET d.owner = $owner, d.first_ts = $ts
      MERGE (s:Session {id: $session})
        ON CREATE SET s.agent = $agent, s.started = $ts, s.device = $device
+     SET s.state = coalesce($state, s.state), s.privileged = coalesce($priv, s.privileged), s.privileged_reason = coalesce($preason, s.privileged_reason)
      MERGE (d)-[:RUNS]->(s)
      MERGE (a:Agent {name: $agent})
      MERGE (s)-[:RAN_BY]->(a)
      MERGE (p:Process {key: $key})
        ON CREATE SET p.pid = $pid, p.name = $proc, p.first_ts = $ts, p.session = $session
      MERGE (s)-[:HAS]->(p)`,
-    { params: { session, device, owner, agent, key, pid, proc: procName, ts } },
+    { params: { session, device, owner, agent, key, pid, proc: procName, ts, state: ev.session_state ?? null, priv: ev.session_privileged ?? null, preason: ev.session_reason ?? null } },
   );
 
   if (ev.ppid) {
@@ -102,6 +116,8 @@ export async function ingestEvent(ev) {
     }
     case 'exec': {
       const prog = base(target);
+      const pkgs = parseInstall(target);
+      if (pkgs.length) await recordPackages(key, ts, pkgs);
       await graph.query(
         `MATCH (p:Process {key: $key})
          MERGE (f:File {path: $path})
@@ -133,6 +149,56 @@ export async function ingestEvent(ev) {
       );
       break;
     }
+    case 'delete': {
+      await graph.query(
+        `MATCH (p:Process {key: $key})
+         MERGE (f:File {path: $path}) ON CREATE SET f.sensitive = $sensitive, f.instruction = $instruction
+         CREATE (p)-[:DELETED {ts: $ts, event: $id, allowed: $allowed}]->(f)`,
+        { params: { key, path: target, sensitive: isSensitive(target), instruction: isInstructionFile(target), ts, id: ev.id || '', allowed } },
+      );
+      break;
+    }
+    case 'send': {
+      const [host, port] = target.split(':');
+      await graph.query(
+        `MATCH (p:Process {key: $key})
+         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved
+         CREATE (p)-[:SENT {ts: $ts, event: $id, allowed: $allowed, port: $port, reason: $reason}]->(h)`,
+        { params: { key, host, approved: isApprovedHost(host), ts, id: ev.id || '', allowed, port: Number(port) || 443, reason: ev.reason || '' } },
+      );
+      break;
+    }
+    case 'dns': {
+      const name = target.toLowerCase();
+      const labels = name.split('.');
+      const longest = Math.max(...labels.map((l) => l.length));
+      await graph.query(
+        `MATCH (p:Process {key: $key})
+         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved
+         SET h.longest_label = $longest, h.labels = $nlabels
+         CREATE (p)-[:RESOLVED {ts: $ts, event: $id, allowed: $allowed}]->(h)`,
+        { params: { key, host: name, approved: isApprovedHost(name), longest, nlabels: labels.length, ts, id: ev.id || '', allowed } },
+      );
+      break;
+    }
+    case 'prompt': {
+      await graph.query(
+        `MATCH (p:Process {key: $key})
+         CREATE (q:Prompt {ts: $ts, event: $id, text: $text, provider: $provider, model: $model, tool_call: $tool, flagged: $flagged, session: $session})
+         CREATE (p)-[:PROMPTED {ts: $ts}]->(q)`,
+        { params: { key, ts, id: ev.id || '', text: redact(ev.text), provider: ev.provider || '', model: ev.model || '', tool: redact(ev.tool_call || ''), flagged: !!ev.flagged, session } },
+      );
+      break;
+    }
+    case 'tamper': {
+      await graph.query(
+        `MATCH (p:Process {key: $key})
+         MERGE (t:Tamper {what: $what})
+         CREATE (p)-[:TAMPERED {ts: $ts, event: $id, allowed: $allowed}]->(t)`,
+        { params: { key, what: target || 'unknown', ts, id: ev.id || '', allowed } },
+      );
+      break;
+    }
     case 'spawn':
       break; // the ppid MERGE above already recorded it
     default:
@@ -145,4 +211,68 @@ export async function ingestMany(events) {
   const touched = new Set();
   for (const ev of events) touched.add(await ingestEvent(ev));
   return [...touched];
+}
+
+// Installed packages → (:Package) with OSV advisories attached as (:Vulnerability).
+async function recordPackages(key, ts, pkgs) {
+  const graph = g();
+  const enriched = await lookup(pkgs);
+  for (const p of enriched) {
+    const worst = (p.vulns || []).reduce((w, v) => RANK[v.severity] > RANK[w] ? v.severity : w, 'none');
+    await graph.query(
+      `MATCH (pr:Process {key: $key})
+       MERGE (k:Package {name: $name, ecosystem: $eco, version: $version})
+       SET k.vuln_count = $count, k.worst = $worst, k.osv_checked = $checked
+       CREATE (pr)-[:INSTALLED {ts: $ts}]->(k)`,
+      { params: { key, name: p.name, eco: p.ecosystem, version: p.version || '*', count: (p.vulns || []).length, worst, checked: p.vulns !== null, ts } },
+    );
+    for (const v of (p.vulns || []).slice(0, 25)) {
+      await graph.query(
+        `MATCH (k:Package {name: $name, ecosystem: $eco, version: $version})
+         MERGE (v:Vulnerability {id: $id}) ON CREATE SET v.summary = $summary, v.severity = $severity
+         MERGE (k)-[:HAS_VULN]->(v)`,
+        { params: { name: p.name, eco: p.ecosystem, version: p.version || '*', id: v.id, summary: v.summary, severity: v.severity } },
+      );
+    }
+  }
+}
+const RANK = { none: 0, unknown: 1, low: 2, moderate: 3, medium: 3, high: 4, critical: 5 };
+
+// MCP servers declared in agent configs (from the daemon's inventory scan).
+export async function ingestMcpServers(servers) {
+  const graph = g();
+  for (const m of servers) {
+    await graph.query(
+      `MERGE (d:Device {id: $device})
+       MERGE (s:McpServer {name: $name, device: $device})
+       SET s.agent = $agent, s.transport = $transport, s.url = $url, s.command = $command, s.scope = $scope, s.held = $held,
+           s.approved = $approved
+       MERGE (d)-[:DECLARES]->(s)`,
+      { params: { device: String(m.device), name: m.name, agent: m.agent || '', transport: m.transport || '', url: m.url || '', command: redact(m.command || ''), scope: m.scope || '', held: !!m.held, approved: isApprovedMcp(m.name, m.url) } },
+    );
+    // link tools already seen for this server
+    await graph.query(
+      `MATCH (s:McpServer {name: $name, device: $device}), (t:McpTool {server: $name})
+       MERGE (s)-[:PROVIDES]->(t)`,
+      { params: { name: m.name, device: String(m.device) } },
+    );
+  }
+}
+const APPROVED_MCP = new Set((process.env.APPROVED_MCP || 'filesystem,github,postgres').split(',').map((s) => s.trim()).filter(Boolean));
+export function isApprovedMcp(name, url) {
+  if (APPROVED_MCP.has(name)) return true;
+  try { return url ? isApprovedHost(new URL(url).hostname) : false; } catch { return false; }
+}
+
+// Narrative lines from the daemon's commentary → (:Note) on the session.
+export async function ingestNotes(notes) {
+  const graph = g();
+  for (const n of notes) {
+    await graph.query(
+      `MERGE (s:Session {id: $session})
+       CREATE (n:Note {seq: $seq, ts: $ts, level: $level, kind: $kind, text: $text, agent: $agent})
+       CREATE (s)-[:NOTED]->(n)`,
+      { params: { session: String(n.session), seq: Number(n.seq) || 0, ts: Number(n.ts) || Date.now(), level: n.level || 'info', kind: n.kind || '', text: redact(n.text), agent: n.agent || '' } },
+    );
+  }
 }

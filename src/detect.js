@@ -11,6 +11,7 @@ import { g } from './db.js';
 export const RULES = [
   {
     id: 'secret-to-egress',
+    threat: 'T2',
     severity: 'critical',
     title: 'Secret read, then connection to an unapproved host',
     // Multi-hop: the read and the connect may be different processes in the
@@ -26,6 +27,7 @@ export const RULES = [
   },
   {
     id: 'secret-to-write-to-egress',
+    threat: 'T5',
     severity: 'critical',
     title: 'Secret read, written into a file, then that tree connected out',
     // The deferred/laundered variant: the secret is encoded into a file
@@ -42,6 +44,7 @@ export const RULES = [
   },
   {
     id: 'privilege-tool',
+    threat: 'T4',
     severity: 'high',
     title: 'Agent tree ran a privilege or scheduling tool',
     cypher: `
@@ -52,6 +55,7 @@ export const RULES = [
   },
   {
     id: 'instruction-file-write',
+    threat: 'T1',
     severity: 'high',
     title: 'Agent rewrote its own instruction file',
     cypher: `
@@ -62,6 +66,7 @@ export const RULES = [
   },
   {
     id: 'write-then-exec',
+    threat: 'T8',
     severity: 'medium',
     title: 'Agent wrote a file and then executed it',
     cypher: `
@@ -74,6 +79,7 @@ export const RULES = [
   },
   {
     id: 'package-install',
+    threat: 'T3',
     severity: 'medium',
     title: 'Agent tree installed packages',
     cypher: `
@@ -82,7 +88,112 @@ export const RULES = [
              p.name + ' ran ' + ex.argv + (CASE WHEN ex.allowed THEN '' ELSE ' (refused)' END) AS summary
       ORDER BY ex.ts DESC LIMIT 20`,
   },
+  {
+    id: 'vulnerable-package',
+    threat: 'T3',
+    severity: 'high',
+    title: 'Agent installed a package with known vulnerabilities (OSV)',
+    cypher: `
+      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[ins:INSTALLED]->(k:Package)-[hv:HAS_VULN]->(v:Vulnerability)
+      WITH p, k, ins, collect(v) AS vs, collect(hv) AS hvs
+      WHERE size(vs) > 0
+      RETURN p, k, ins, ([p, k] + vs) AS pn, ([ins] + hvs) AS pr,
+             p.name + ' installed ' + k.ecosystem + ':' + k.name + '@' + k.version + ' with ' + toString(size(vs)) + ' OSV advisories (worst: ' + k.worst + ')' AS summary
+      ORDER BY ins.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'mcp-unapproved-server',
+    threat: 'T3',
+    severity: 'high',
+    title: 'Agent used a tool from an MCP server that is not approved',
+    cypher: `
+      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[u:USED_TOOL]->(t:McpTool)
+      OPTIONAL MATCH (m:McpServer {name: t.server})
+      WITH p, t, u, m WHERE (m IS NULL AND NOT t.server IN $approvedMcp) OR m.held = true OR m.approved = false
+      RETURN p, t, u, [p, t] AS pn, [u] AS pr,
+             p.name + ' called ' + t.server + '/' + t.name + (CASE WHEN m IS NOT NULL AND m.held THEN ' (server is held)' ELSE ' (server not approved)' END) AS summary
+      ORDER BY u.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'dns-tunnel-shape',
+    threat: 'T5',
+    severity: 'high',
+    title: 'DNS lookups shaped like tunnelling (long encoded labels)',
+    cypher: `
+      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[r:RESOLVED]->(h:Host)
+      WHERE h.longest_label >= 30 OR size(h.name) >= 60
+      RETURN p, h, r, [p, h] AS pn, [r] AS pr,
+             p.name + ' resolved ' + h.name AS summary
+      ORDER BY r.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'bulk-read-then-egress',
+    threat: 'T5',
+    severity: 'high',
+    title: 'Bulk file reads followed by a connection to an unapproved host',
+    cypher: `
+      MATCH (s:Session {id: $session})-[:HAS]->(r:Process)-[rd:READ]->(f:File)
+      WITH s, r, count(DISTINCT f) AS files, max(rd.ts) AS lastRead
+      WHERE files >= 25
+      MATCH path = (r)-[:SPAWNED*0..4]->(c:Process)-[cn:CONNECTED]->(h:Host)
+      WHERE h.approved = false AND cn.ts >= lastRead
+      RETURN r, c, h, cn, nodes(path) AS pn, relationships(path) AS pr,
+             r.name + ' read ' + toString(files) + ' files, then ' + c.name + ' connected to ' + h.name AS summary
+      ORDER BY cn.ts DESC LIMIT 10`,
+  },
+  {
+    id: 'tamper',
+    threat: 'T8',
+    severity: 'critical',
+    title: 'Tamper attempt on the security daemon or a contained process',
+    cypher: `
+      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[t:TAMPERED]->(w:Tamper)
+      RETURN p, w, t, [p, w] AS pn, [t] AS pr,
+             p.name + ' attempted ' + w.what + (CASE WHEN t.allowed THEN '' ELSE ' (refused)' END) AS summary
+      ORDER BY t.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'flagged-prompt',
+    threat: 'T1',
+    severity: 'high',
+    title: 'Prompt flagged by the daemon (injection or offensive content)',
+    cypher: `
+      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[pr0:PROMPTED]->(q:Prompt {flagged: true})
+      RETURN p, q, pr0, [p, q] AS pn, [pr0] AS pr,
+             'Flagged prompt via ' + p.name + ': ' + left(q.text, 80) AS summary
+      ORDER BY q.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'refused-egress',
+    threat: 'T5',
+    severity: 'medium',
+    title: 'Outbound request refused by the proxy (DLP or policy)',
+    cypher: `
+      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[e:CONNECTED|SENT]->(h:Host)
+      WHERE e.allowed = false
+      RETURN p, h, e, [p, h] AS pn, [e] AS pr,
+             p.name + ' → ' + h.name + ' refused' + (CASE WHEN e.reason IS NULL OR e.reason = '' THEN '' ELSE ': ' + e.reason END) AS summary
+      ORDER BY e.ts DESC LIMIT 20`,
+  },
+  {
+    id: 'daemon-flagged-session',
+    threat: 'T2',
+    severity: 'high',
+    title: 'The daemon flagged this session as privileged',
+    cypher: `
+      MATCH (s:Session {id: $session}) WHERE s.privileged = true
+      MATCH (s)-[:HAS]->(p:Process)
+      WITH s, p ORDER BY p.first_ts LIMIT 1
+      RETURN s, p, [p] AS pn, [] AS pr,
+             s.agent + ' session flagged by the daemon: ' + coalesce(s.privileged_reason, 'privileged') AS summary`,
+  },
 ];
+
+export const THREATS = {
+  T1: 'Prompt Injection', T2: 'Credential Exfiltration', T3: 'Supply Chain Compromise', T4: 'Privilege Escalation',
+  T5: 'Data Exfiltration', T6: 'Intent vs Behavior Mismatch', T7: 'Behavioral Anomaly', T8: 'C2 / Persistence', T9: 'AI Framework CVE Exploitation',
+};
+const APPROVED_MCP = (process.env.APPROVED_MCP || 'filesystem,github,postgres').split(',').map((s) => s.trim()).filter(Boolean);
 
 function nodeId(n) { return n.id; }
 
@@ -92,7 +203,7 @@ export async function detect(session) {
   const graph = g();
   const alerts = [];
   for (const rule of RULES) {
-    const res = await graph.roQuery(rule.cypher, { params: { session } });
+    const res = await graph.roQuery(rule.cypher, { params: { session, approvedMcp: APPROVED_MCP } });
     for (const row of res.data || []) {
       const pn = (row.pn || []).map(nodeId);
       const pr = (row.pr || []).map((e) => e.id);
@@ -103,7 +214,7 @@ export async function detect(session) {
         else if ('relationshipType' in v) pr.push(v.id);
       }
       alerts.push({
-        rule: rule.id, severity: rule.severity, title: rule.title, summary: row.summary,
+        rule: rule.id, threat: rule.threat, threatName: THREATS[rule.threat], severity: rule.severity, title: rule.title, summary: row.summary,
         nodes: [...new Set(pn)], edges: [...new Set(pr)],
       });
     }

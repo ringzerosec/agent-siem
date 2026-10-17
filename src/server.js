@@ -14,8 +14,8 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, g, wipe } from './db.js';
-import { ingestMany } from './ingest.js';
-import { detect, detectDevice, blastRadius } from './detect.js';
+import { ingestMany, ingestMcpServers, ingestNotes } from './ingest.js';
+import { detect, detectDevice, blastRadius, THREATS } from './detect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
@@ -54,6 +54,49 @@ app.post('/api/events', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+app.post('/api/mcp-servers', async (req, res, next) => {
+  try {
+    const servers = Array.isArray(req.body) ? req.body : [req.body];
+    await ingestMcpServers(servers);
+    for (const d of new Set(servers.map((m) => String(m.device)))) broadcast({ type: 'update', device: d });
+    res.json({ ingested: servers.length });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/notes', async (req, res, next) => {
+  try {
+    const notes = Array.isArray(req.body) ? req.body : [req.body];
+    await ingestNotes(notes);
+    for (const d of new Set(notes.map((n) => String(n.device)))) broadcast({ type: 'note', device: d });
+    res.json({ ingested: notes.length });
+  } catch (e) { next(e); }
+});
+
+// Live session feed: prompts and the daemon's narrative, newest last.
+app.get('/api/feed/:device', async (req, res, next) => {
+  try {
+    const id = req.params.device;
+    const r = await g().roQuery(
+      `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)
+       OPTIONAL MATCH (s)-[:HAS]->(p:Process)-[:PROMPTED]->(q:Prompt)
+       OPTIONAL MATCH (s)-[:NOTED]->(n:Note)
+       WITH s, collect(DISTINCT {kind: 'prompt', ts: q.ts, text: q.text, model: q.model, provider: q.provider, tool: q.tool_call, flagged: q.flagged, via: p.name}) AS prompts,
+            collect(DISTINCT {kind: 'note', ts: n.ts, text: n.text, level: n.level, nkind: n.kind, agent: n.agent}) AS notes
+       RETURN s.id AS session, s.agent AS agent, prompts, notes`,
+      { params: { id } },
+    );
+    const items = [];
+    for (const row of r.data || []) {
+      for (const p of row.prompts) if (p.ts) items.push({ session: row.session, ...p });
+      for (const n of row.notes) if (n.ts) items.push({ session: row.session, ...n });
+    }
+    items.sort((a, b) => a.ts - b.ts);
+    res.json({ device: id, items: items.slice(-300) });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/threats', (_req, res) => res.json(THREATS));
+
 app.post('/api/reset', async (_req, res, next) => {
   try { await wipe(); broadcast({ type: 'reset' }); res.json({ ok: true }); } catch (e) { next(e); }
 });
@@ -65,20 +108,24 @@ app.get('/api/devices', async (_req, res, next) => {
       `MATCH (d:Device)
        OPTIONAL MATCH (d)-[:RUNS]->(s:Session)
        OPTIONAL MATCH (s)-[:HAS]->(p:Process)
-       OPTIONAL MATCH (p)-[e]->()
+       OPTIONAL MATCH (p)-[e]->() WHERE e.ts >= $since
        WITH d, count(DISTINCT s) AS sessions, count(DISTINCT p) AS procs, count(e) AS actions, max(e.ts) AS last,
             collect(DISTINCT s.agent) AS agents
        RETURN d.id AS id, d.owner AS owner, sessions, procs, actions, last, agents
        ORDER BY d.id`,
+      { params: { since: Date.now() - Number(process.env.GRAPH_WINDOW_HOURS || 24) * 3600 * 1000 } },
     );
     const out = [];
     for (const row of r.data || []) {
       const alerts = await detectDevice(row.id);
+      const threats = {};
+      for (const a of alerts) threats[a.threat] = (threats[a.threat] || 0) + 1;
       out.push({
         ...row,
         alerts: alerts.length,
         critical: alerts.filter((a) => a.severity === 'critical').length,
         high: alerts.filter((a) => a.severity === 'high').length,
+        threats,
         top: alerts[0]?.summary || null,
       });
     }
@@ -86,14 +133,22 @@ app.get('/api/devices', async (_req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Device graph is windowed: the last `hours` of activity (default 24) and at
+// most `cap` edges (default 600, newest first), or a tile would try to draw
+// months of history.
 app.get('/api/graph/device/:id', async (req, res, next) => {
   try {
     const id = req.params.id;
+    const hours = Number(req.query.hours || process.env.GRAPH_WINDOW_HOURS || 24);
+    const cap = Math.min(Number(req.query.cap || 600), 3000);
+    const since = Date.now() - hours * 3600 * 1000;
     const r = await g().roQuery(
-      `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)-[:HAS]->(p:Process)
-       OPTIONAL MATCH (p)-[e]->(m) WHERE NOT m:Session
-       RETURN s, p, e, m`,
-      { params: { id } },
+      `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)-[:HAS]->(p:Process)-[e]->(m)
+       WHERE NOT m:Session AND NOT m:Prompt AND coalesce(e.ts, p.first_ts) >= $since
+       OPTIONAL MATCH (m)-[e2:HAS_VULN]->(v:Vulnerability)
+       RETURN s, p, e, m, e2, v
+       ORDER BY e.ts DESC LIMIT $cap`,
+      { params: { id, since, cap } },
     );
     const nodes = new Map();
     const edges = new Map();
@@ -101,6 +156,8 @@ app.get('/api/graph/device/:id', async (req, res, next) => {
       nodes.set(row.p.id, row.p);
       if (row.m) nodes.set(row.m.id, row.m);
       if (row.e) edges.set(row.e.id, row.e);
+      if (row.v) nodes.set(row.v.id, row.v);
+      if (row.e2) edges.set(row.e2.id, row.e2);
     }
     const alerts = await detectDevice(id);
     res.json({ device: id, nodes: [...nodes.values()], edges: [...edges.values()], alerts });
