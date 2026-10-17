@@ -601,7 +601,9 @@
   function settle(net, ms, fit = true) {
     clearTimeout(net.__settle);
     net.setOptions({ physics: { enabled: true } });
-    const done = () => { clearTimeout(net.__settle); net.setOptions({ physics: { enabled: false } }); if (fit) fitReadable(net); };
+    // A hidden network (wall behind another tab) measures 0x0, and fitting it
+    // then leaves a wrong zoom; remember the fit and do it when it is shown.
+    const done = () => { clearTimeout(net.__settle); net.setOptions({ physics: { enabled: false } }); if (fit) { if (net.body.container.clientWidth) fitReadable(net); else net.__needsFit = true; } };
     net.once('stabilized', done);
     net.__settle = setTimeout(done, 3000);   // never leave physics running (empty graphs never report stabilized)
     net.stabilize(Math.max(100, Math.round(ms / 4)));
@@ -1055,12 +1057,18 @@
       $('#surface').innerHTML = `${actRows}<div class="sh">AI services</div>${aiRows}<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
     } catch { $('#surface').innerHTML = '<div class="empty">Could not load.</div>'; }
   }
+  // Back on the wall: tiles laid out while it was hidden were not fitted
+  // (see settle); fit every tile once the browser has sized them again.
+  function refitTiles() {
+    requestAnimationFrame(() => { for (const t of state.tiles.values()) { if (!t.net || !t.net.body.container.clientWidth) continue; t.net.redraw(); t.net.fit({ animation: false }); t.net.__needsFit = false; } });
+  }
   function closeDevice() {
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
     state.device = null; state.focus = null; state.graph = null;
     $('#detail').hidden = true; $('#back').hidden = true;
     if (state.net) { state.net.destroy(); state.net = null; }
     $('#nodeDetail').hidden = true; $('#nodehint').hidden = false;
+    if (view === 'wall') refitTiles();
   }
 
   // ---- alerts: grouped by threat, collapsed; OSV evidence inside --------
@@ -1156,6 +1164,7 @@
     if (v === 'events' && state.device) closeDevice();
     if ((v === 'campaigns' || v === 'ai' || v === 'gov') && state.device) closeDevice();
     $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai'; $('#gov').hidden = v !== 'gov';
+    if (v === 'wall') refitTiles();
     if (v === 'gov') loadGov();
     if (v === 'ai') loadAi();
     if (v === 'events') loadEvents();
