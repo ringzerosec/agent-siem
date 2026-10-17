@@ -11,15 +11,17 @@ const HOST = process.env.FALKORDB_HOST || 'localhost';
 const PORT = Number(process.env.FALKORDB_PORT || 6379);
 const GRAPH = process.env.FALKORDB_GRAPH || 'agentwatch';
 
-let db, dbRead;
-let graph, graphRead;
+let db, dbRead, dbDetect;
+let graph, graphRead, graphDetect;
 
-// Two connections: writes and detection go through one, dashboard reads
-// through the other, so a burst of rule queries never queues a page load.
+// Three connections: graph writes, alert-rule queries and dashboard reads
+// each get their own, so a slow rule never stalls ingest or a page load.
 export async function connect() {
   if (graph) return graph;
   db = await FalkorDB.connect({ host: HOST, port: PORT });
   dbRead = await FalkorDB.connect({ host: HOST, port: PORT });
+  dbDetect = await FalkorDB.connect({ host: HOST, port: PORT });
+  graphDetect = dbDetect.selectGraph(GRAPH);
   graph = db.selectGraph(GRAPH);
   graphRead = dbRead.selectGraph(GRAPH);
   await ensureIndexes();
@@ -29,6 +31,10 @@ export async function connect() {
 export function g() {
   if (!graph) throw new Error('db not connected');
   return graph;
+}
+export function gd() {
+  if (!graphDetect) throw new Error('db not connected');
+  return graphDetect;
 }
 export function gr() {
   if (!graphRead) throw new Error('db not connected');
@@ -59,5 +65,6 @@ export async function wipe() {
 export async function close() {
   if (db) await db.close();
   if (dbRead) await dbRead.close();
-  db = dbRead = undefined; graph = graphRead = undefined;
+  if (dbDetect) await dbDetect.close();
+  db = dbRead = dbDetect = undefined; graph = graphRead = graphDetect = undefined;
 }

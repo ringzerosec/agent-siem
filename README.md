@@ -104,7 +104,7 @@ wall. The adapter polls each daemon's read-only API (sessions, their events,
 the narrative commentary, the MCP inventory) and feeds the graph:
 
 ```bash
-RZS="priya-laptop=http://10.0.0.12:7700,build-vm=http://10.0.0.5:7700" \
+RZS="ENG-MBP-0142=http://10.0.0.12:7700,build-vm=http://10.0.0.5:7700" \
 RZS_TOKEN="$(cat /var/lib/ringzero/api-token-readonly)" \
 node src/adapter-rzs.js
 ```
@@ -193,7 +193,7 @@ NATS_URL=nats://localhost:4222 npm start
 `POST /api/events` takes a JSON array:
 
 ```json
-{"id":"e1","ts":1760000000000,"device":"priya-laptop","owner":"priya","session":"priya-laptop-s1","agent":"claude-code",
+{"id":"e1","ts":1760000000000,"device":"ENG-MBP-0142","owner":"Platform Engineering","session":"ENG-MBP-0142-s1","agent":"claude-code",
  "kind":"read","pid":4242,"ppid":4000,"process":"python3","parent_process":"claude-code",
  "target":"/home/dev/app/.env","allowed":true}
 ```

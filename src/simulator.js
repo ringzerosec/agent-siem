@@ -7,7 +7,7 @@
 // tree later connects to a host that is not on the approved list. Those are
 // the devices that should turn red on the wall.
 //
-//   node src/simulator.js                       # 12 devices → http://localhost:8080
+//   node src/simulator.js                       # 12 endpoints → http://localhost:8080
 //   SIM_DEVICES=20 SIM_RATE_MS=300 node src/simulator.js
 
 const API = process.env.API || 'http://localhost:8080';
@@ -16,7 +16,17 @@ const RATE = Number(process.env.SIM_RATE_MS || 3000);
 const SESSION_LEN = Number(process.env.SIM_SESSION_LEN || 120);   // actions per session before the agent run ends and a new one starts
 
 const AGENTS = ['claude-code', 'cursor-agent', 'codex', 'gemini-cli'];
-const OWNERS = ['priya', 'arjun', 'meera', 'rahul', 'ananya', 'vikram', 'sneha', 'karthik', 'divya', 'rohan', 'neha', 'aditya', 'ishita', 'manish', 'pooja', 'sameer', 'tanvi', 'varun', 'kavya', 'nikhil'];
+// Endpoints are named like a corporate asset inventory: <team>-<form factor>-<asset no>.
+// The tile's headline is the owning team, never a person.
+const ENDPOINTS = [
+  ['ENG-MBP-0142', 'Platform Engineering'], ['ENG-MBP-0217', 'Platform Engineering'], ['PAY-MBP-0388', 'Payments'],
+  ['DS-WKS-0051', 'Data Science'], ['SEC-LT-0019', 'Security Engineering'], ['MOB-MBP-0264', 'Mobile'],
+  ['SRE-LT-0073', 'Site Reliability'], ['FIN-LT-0412', 'Finance Systems'], ['ML-WKS-0096', 'ML Research'],
+  ['WEB-MBP-0335', 'Web Frontend'], ['API-LT-0158', 'API Platform'], ['QA-LT-0229', 'Quality Engineering'],
+  ['ENG-MBP-0301', 'Platform Engineering'], ['DATA-LT-0187', 'Data Engineering'], ['IT-LT-0044', 'IT Operations'],
+  ['INF-WKS-0120', 'Infrastructure'], ['PAY-LT-0399', 'Payments'], ['DS-MBP-0063', 'Data Science'],
+  ['CORE-LT-0275', 'Core Services'], ['GRW-MBP-0350', 'Growth Engineering'],
+];
 const REPO = ['/home/dev/app/src/main.rs', '/home/dev/app/src/lib.rs', '/home/dev/app/Cargo.toml', '/home/dev/app/README.md', '/home/dev/app/tests/api_test.rs', '/home/dev/app/package.json', '/home/dev/app/src/routes.ts', '/home/dev/app/src/auth.ts'];
 const SECRETS = ['/home/dev/app/.env', '/home/dev/.ssh/id_ed25519', '/home/dev/.aws/credentials', '/home/dev/.docker/config.json'];
 const APPROVED = ['api.anthropic.com', 'api.openai.com', 'github.com', 'registry.npmjs.org', 'pypi.org'];
@@ -90,8 +100,7 @@ async function post(events) {
 
 const sessions = [];
 for (let i = 0; i < DEVICES; i++) {
-  const owner = OWNERS[i % OWNERS.length];
-  const device = `${owner}-laptop`;
+  const [device, owner] = ENDPOINTS[i % ENDPOINTS.length];
   const n = 1 + (Math.random() < 0.35 ? 1 : 0);        // some devices run two agents
   for (let k = 1; k <= n; k++) sessions.push(new Session(device, owner, k, i + k));
 }

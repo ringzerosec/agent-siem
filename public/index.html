@@ -76,24 +76,55 @@
   .stat b { font-size: 18px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
   .stat span { font-size: 12px; color: var(--muted-foreground); }
   .stat.crit b { color: var(--destructive); } .stat.high b { color: var(--event-pii); }
+  button.stat { font: inherit; color: inherit; cursor: pointer; } button.stat:disabled { cursor: default; }
+  button.stat:not(:disabled):hover { border-color: var(--primary); }
+  button.stat.on { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(1,105,111,.18); }
+  #statContained b { color: var(--primary); }
+  .tile.filtered { display: none; }
+  /* Endpoint summary (device view) */
+  .endpoint { padding: 12px 14px; display: grid; gap: 8px; }
+  .endpoint .row1 { display: flex; align-items: center; gap: 8px; }
+  .endpoint .host { font: 600 15px var(--mono); }
+  .endpoint .verdict { margin-left: auto; }
+  .endpoint dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0; }
+  .endpoint dt { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); }
+  .endpoint dd { margin: 0; font: 600 12.5px var(--mono); }
+  .endpoint .team { font-size: 12.5px; color: var(--accent-foreground); }
+  /* Alert detail: outcome, technique, response */
+  .alert .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .alert .when { font: 10.5px var(--mono); color: var(--muted-foreground); }
+  .alert .attack { font: 10.5px var(--mono); color: var(--muted-foreground); margin-top: 8px; }
+  .alert .resp { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 12px; line-height: 1.45; }
+  .alert .resp b { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--primary); margin-bottom: 2px; }
+  .badge.contained { background: rgba(1,105,111,.10); color: var(--primary); border-color: transparent; }
 
   /* The wall */
-  #wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); grid-auto-rows: minmax(230px, 1fr); gap: 12px; padding: 14px 20px; overflow: auto; }
-  .tile { position: relative; cursor: pointer; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
-  .tile:hover { border-color: var(--primary); }
+  #wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); grid-auto-rows: 268px; gap: 12px; padding: 14px 20px; overflow: auto; align-content: start; }
+  /* Endpoint card (21st.dev "Server Card" pattern): status dot + hostname + pill, team/agents meta, graph, spec row. */
+  .tile { position: relative; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; transition: border-color .2s, box-shadow .2s; }
+  .tile:hover { border-color: var(--primary); box-shadow: 0 4px 14px rgba(1,105,111,.10); }
+  .tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   .tile.high { border-color: var(--event-pii); }
   .tile.crit { border-color: var(--destructive); box-shadow: 0 0 0 1px var(--destructive), 0 0 24px rgba(220,38,38,.18); animation: pulse 1.6s ease-in-out 3; }
-  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 1px var(--destructive), 0 0 24px rgba(220,38,38,.18);} 50% { box-shadow: 0 0 0 2px var(--destructive), 0 0 40px rgba(220,38,38,.4);} }
-  .tile .net { position: absolute; inset: 0; background: var(--canvas); }
-  .tile .hd { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 10px 12px; z-index: 2; pointer-events: none; background: linear-gradient(var(--card) 60%, transparent); }
-  .tile .owner { font-weight: 600; font-size: 13px; }
-  .tile .dev { font-family: var(--mono); font-size: 11px; color: var(--muted-foreground); }
-  .tile.sim .dev { font-style: italic; }
-  .tile.idle { opacity: .55; }
+  .tile .hd { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 8px; padding: 11px 12px 8px; border-bottom: 1px solid var(--border); background: var(--card); }
+  .tile .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
+  .tile.high .dot { background: #d97706; box-shadow: 0 0 0 3px rgba(217,119,6,.18); }
+  .tile.crit .dot { background: #dc2626; box-shadow: 0 0 0 3px rgba(220,38,38,.2); }
+  .tile.idle .dot { background: var(--muted-foreground); box-shadow: none; }
+  .tile .dev { font: 600 13px var(--mono); color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .meta { grid-column: 2 / 4; display: flex; gap: 6px; align-items: center; min-width: 0; font-size: 11.5px; color: var(--muted-foreground); }
+  .tile .owner { white-space: nowrap; font-weight: 500; color: var(--accent-foreground); }
+  .tile .agents { font-family: var(--mono); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .agents:not(:empty)::before { content: '·'; margin-right: 6px; }
+  .tile .sim { font: 500 9.5px var(--mono); text-transform: uppercase; letter-spacing: .04em; border: 1px dashed var(--border); border-radius: 4px; padding: 0 4px; color: var(--muted-foreground); }
+  .tile .net { flex: 1; min-height: 0; background: var(--canvas); }
+  .tile .ft { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-height: 36px; padding: 7px 12px; border-top: 1px solid var(--border); background: var(--card); font-size: 11px; color: var(--muted-foreground); }
+  .tile .spec { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
+  .tile .spec div { display: flex; flex-direction: column; line-height: 1.2; }
+  .tile .spec b { font: 600 12px var(--mono); color: var(--foreground); }
+  .tile .spec span { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  .tile.idle { opacity: .6; }
   .tile.idle.crit, .tile.idle.high { animation: none; box-shadow: none; }
-  .tile .hd .badge { margin-left: auto; }
-  .tile .agents { position: absolute; top: 34px; left: 12px; font-size: 10.5px; color: var(--muted-foreground); font-family: var(--mono); z-index: 2; pointer-events: none; }
-  .tile .ft { position: absolute; bottom: 0; left: 0; right: 0; padding: 8px 12px; font-size: 11px; color: var(--muted-foreground); z-index: 2; pointer-events: none; background: linear-gradient(transparent, var(--card) 40%); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   #wallEmpty { grid-column: 1 / -1; display: grid; place-items: center; color: var(--muted-foreground); }
   #events { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   #events[hidden] { display: none; }
@@ -187,11 +218,11 @@
     <button data-r="24h" class="on">24 h</button><button data-r="today">Today</button><button data-r="yday">Yesterday</button><button data-r="7d">7 days</button><button data-r="all">All</button>
   </div>
   <div class="stats">
-    <div class="stat" id="statDevices"><b>0</b><span>devices</span></div>
-    <div class="stat crit" id="statCrit"><b>0</b><span>critical</span></div>
-    <div class="stat high" id="statHigh"><b>0</b><span>high</span></div>
+    <button class="stat" id="statDevices" data-sev="" title="Show every endpoint"><b>0</b><span>endpoints</span></button>
+    <button class="stat crit" id="statCrit" data-sev="crit" title="Show endpoints with critical alerts"><b>0</b><span>critical</span></button>
+    <button class="stat high" id="statHigh" data-sev="high" title="Show endpoints with high alerts"><b>0</b><span>high</span></button>
+    <button class="stat" id="statContained" data-sev="" title="Alert paths stopped by Ring Zero Security" disabled><b>0</b><span>contained</span></button>
   </div>
-  <button class="btn sm" id="reset" title="Wipe the graph (demo)">Reset</button>
 </header>
 
 <div id="wall"><div id="wallEmpty">Waiting for devices…</div></div>
@@ -219,6 +250,7 @@
       <span class="chip" id="title"></span>
       <button class="btn sm" id="whole" hidden>← whole device</button>
       <button class="btn sm" id="fit">Fit</button>
+      <button class="btn sm" id="pathsOnly" title="Large endpoints open on alert paths only" aria-pressed="false">Alert paths only</button>
     </div>
     <div id="graph"></div>
     <div class="legend">
@@ -233,6 +265,9 @@
     </div>
   </section>
   <section class="side">
+    <div class="card">
+      <div class="endpoint" id="endpoint"></div>
+    </div>
     <div class="card">
       <div class="card-header"><h2 class="sec">Alerts by threat <span class="dim">· click to expand</span></h2><span class="badge outline" id="alertCount">0</span></div>
       <div class="frame" id="alerts"></div>
@@ -257,6 +292,7 @@
   const $ = (s) => document.querySelector(s);
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const fmt = (ts) => ts ? new Date(ts).toLocaleTimeString() : '';
+  const ago = (ts) => { if (!ts) return '—'; const s = Math.max(0, (Date.now() - ts) / 1000); return s < 60 ? 'now' : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`; };
   const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let THREATS = {};
   fetch('/api/threats').then((r) => r.json()).then((t) => { THREATS = t; });
@@ -333,7 +369,8 @@
       color: onPath.has(n.id)
         ? { border: '#dc2626', background: '#dc2626', highlight: { border: '#0a0a0a', background: '#dc2626' } }
         : { border: nb, background: nb, highlight: { border: '#01696f', background: '#01696f' } },
-      font: { color: lab, face: 'Geist Mono', size: 11, background: labbg },
+      font: { color: lab, face: 'Geist Mono', size: 12, background: labbg },
+      scaling: { label: { enabled: true, min: 11, max: 14, drawThreshold: 3, maxVisible: 30 } },
       borderWidth: onPath.has(n.id) ? (mini ? 3 : 4) : 1,
       shadow: onPath.has(n.id) ? { enabled: true, color: 'rgba(220,38,38,.45)', size: mini ? 10 : 18, x: 0, y: 0 } : false,
     }));
@@ -369,12 +406,17 @@
     const wall = $('#wall');
     if (devices.length) $('#wallEmpty')?.remove();
     let crit = 0, high = 0;
+    const risk = (d) => (d.actions ? 0 : 10) + (d.critical ? 0 : d.high ? 1 : d.alerts ? 2 : 3);
+    devices.sort((a, b) => risk(a) - risk(b) || (b.alerts - a.alerts) || (a.simulated === b.simulated ? 0 : a.simulated ? 1 : -1) || (b.last || 0) - (a.last || 0));
+    state.devices = new Map(devices.map((d) => [d.id, d]));
     for (const d of devices) {
       crit += d.critical; high += d.high;
       let t = state.tiles.get(d.id);
       if (!t) {
         const el = document.createElement('div'); el.className = 'tile card';
-        el.innerHTML = `<div class="hd"><span class="owner"></span><span class="dev"></span><span class="badge outline"></span></div><div class="agents"></div><div class="net"></div><div class="ft"></div>`;
+        el.tabIndex = 0; el.setAttribute('role', 'button');
+        el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDevice(d.id); } };
+        el.innerHTML = `<div class="hd"><span class="dot"></span><span class="dev"></span><span class="badge outline"></span><div class="meta"><span class="owner"></span><span class="sim" hidden>sim</span><span class="agents"></span></div></div><div class="net"></div><div class="ft"></div>`;
         el.onclick = () => openDevice(d.id);
         wall.appendChild(el);
         const nodes = new vis.DataSet([]), edges = new vis.DataSet([]);
@@ -382,26 +424,30 @@
         t = { el, net, nodes, edges, had: 0 };
         state.tiles.set(d.id, t);
       }
-      t.el.querySelector('.owner').textContent = d.owner || d.id;
-      t.el.querySelector('.dev').textContent = d.id + (d.simulated ? ' · simulated' : '');
-      t.el.classList.toggle('sim', !!d.simulated);
+      t.el.querySelector('.owner').textContent = d.owner || 'Unassigned';
+      t.el.querySelector('.dev').textContent = d.id; t.el.querySelector('.dev').title = d.id;
+      t.el.querySelector('.sim').hidden = !d.simulated;
+      t.el.setAttribute('aria-label', `${d.id}, ${d.owner || 'unassigned'}, ${d.alerts ? d.alerts + ' alerts' : 'clean'}`);
       t.el.querySelector('.agents').textContent = (d.agents || []).filter(Boolean).join(' · ');
       const badge = t.el.querySelector('.badge');
       badge.className = 'badge ' + (d.critical ? 'solid' : d.high ? 'warning' : d.alerts ? 'outline' : 'success');
       badge.textContent = d.alerts ? `${d.alerts} alert${d.alerts > 1 ? 's' : ''}` : 'clean';
       const chips = Object.entries(d.threats || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<span class="badge ${d.critical ? 'destructive' : d.high ? 'warning' : 'outline'}" title="${esc(THREATS[k] || k)}">${k}${n > 1 ? ' ×' + n : ''}</span>`).join('');
-      t.el.querySelector('.ft').innerHTML = chips || `<span class="dim">${d.procs} proc · ${d.actions} actions · ${fmt(d.last)}</span>`;
+      t.el.querySelector('.ft').innerHTML = chips || `<div class="spec"><div><b>${d.procs ?? 0}</b><span>processes</span></div><div><b>${d.actions ?? 0}</b><span>actions</span></div><div><b title="${fmt(d.last)}">${ago(d.last)}</b><span>last seen</span></div></div>`;
       const cls = d.critical ? 'crit' : d.high ? 'high' : '';
       if (cls === 'crit' && !t.el.classList.contains('crit')) { t.el.style.animation = 'none'; void t.el.offsetWidth; t.el.style.animation = ''; }
       t.el.classList.remove('crit', 'high'); if (cls) t.el.classList.add(cls);
       t.el.classList.toggle('idle', !d.actions);
       if (!d.actions) t.el.querySelector('.ft').innerHTML = `<span class="dim">idle · no activity in this range${d.alerts ? ' · ' + d.alerts + ' past alert' + (d.alerts > 1 ? 's' : '') : ''}</span>`;
-      wall.appendChild(t.el);   // re-append in server order: active first, idle last
+      t.el.classList.toggle('filtered', state.sev === 'crit' ? !d.critical : state.sev === 'high' ? !(d.critical || d.high) : false);
+      wall.appendChild(t.el);   // re-append in risk order: critical, high, other alerts, clean; idle last
       if (!onlyDevices || onlyDevices.has(d.id) || t.had === 0) refreshTile(d.id, t, d);
     }
-    $('#statDevices').innerHTML = `<b>${devices.length}</b><span>devices</span>`;
+    $('#statDevices').innerHTML = `<b>${devices.length}</b><span>endpoints</span>`;
     $('#statCrit').innerHTML = `<b>${crit}</b><span>critical</span>`;
     $('#statHigh').innerHTML = `<b>${high}</b><span>high</span>`;
+    $('#statContained').innerHTML = `<b>${devices.reduce((n, d) => n + (d.contained || 0), 0)}</b><span>contained</span>`;
+    if (state.device) renderEndpoint(state.device);
   }
   // Tile graphs load through a small queue (2 in flight) so the browser's
   // per-host connection pool stays free for the device view and live stream.
@@ -455,11 +501,31 @@
   async function openDevice(id, keepFocus) {
     state.device = id; if (!keepFocus) state.focus = null;
     $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true;
-    const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
+    let gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
     state.graph = gph;
+    // Big endpoints (hundreds of nodes) open on the alert paths only; the
+    // button toggles back to everything.
+    if (state.pathsAuto !== false && state.lastDevice !== id) state.pathsOnly = gph.nodes.length > 150 && gph.alerts.length > 0;
+    state.lastDevice = id;
+    $('#pathsOnly').setAttribute('aria-pressed', String(!!state.pathsOnly)); $('#pathsOnly').classList.toggle('on', !!state.pathsOnly);
+    $('#pathsOnly').textContent = state.pathsOnly ? 'Show everything' : 'Alert paths only';
+    if (state.pathsOnly) {
+      const keepN = new Set(gph.alerts.flatMap((a) => a.nodes)), keepE = new Set(gph.alerts.flatMap((a) => a.edges));
+      gph = { ...gph, nodes: gph.nodes.filter((n) => keepN.has(n.id)), edges: gph.edges.filter((e) => keepE.has(e.id) && keepN.has(e.sourceId) && keepN.has(e.destinationId)) };
+    }
     if (!state.focus) render(gph.nodes, gph.edges, gph.alerts, `<b>${esc(id)}</b> · ${gph.nodes.length} nodes · ${gph.alerts.length} alerts`);
-    renderAlerts(gph.alerts); loadFeed(id);
+    renderAlerts(gph.alerts); loadFeed(id); renderEndpoint(id, gph.alerts);
     setTimeout(() => state.net && state.net.fit({ animation: false }), 50);
+  }
+  function renderEndpoint(id, alerts) {
+    const d = state.devices?.get(id) || { id };
+    alerts = alerts || state.graph?.alerts || [];
+    const crit = alerts.filter((a) => a.severity === 'critical').length, high = alerts.filter((a) => a.severity === 'high').length;
+    const contained = alerts.filter((a) => a.blocked === true).length;
+    const verdict = crit ? '<span class="badge solid verdict">critical risk</span>' : high ? '<span class="badge warning verdict">high risk</span>' : alerts.length ? '<span class="badge outline verdict">review</span>' : '<span class="badge success verdict">clean</span>';
+    $('#endpoint').innerHTML = `<div class="row1"><span class="host">${esc(d.id)}</span>${d.simulated ? '<span class="sim badge outline">sim</span>' : ''}${verdict}</div>
+      <div class="team">${esc(d.owner || 'Unassigned')} · ${esc((d.agents || []).filter(Boolean).join(', ') || 'no agents seen')}</div>
+      <dl><div><dt>sessions</dt><dd>${d.sessions ?? '—'}</dd></div><div><dt>actions</dt><dd>${d.actions ?? '—'}</dd></div><div><dt>contained</dt><dd>${contained}/${alerts.length}</dd></div><div><dt>last seen</dt><dd title="${fmt(d.last)}">${ago(d.last)}</dd></div></dl>`;
   }
   function closeDevice() {
     state.device = null; state.focus = null; state.graph = null;
@@ -499,7 +565,7 @@
       const open = openGroups.has(k);
       const div = document.createElement('div'); div.className = `panel group ${worst}`;
       div.innerHTML = `<div class="gh"><span class="badge destructive">${esc(k)}</span><span class="gt">${esc(THREATS[k] || k)}</span><span class="badge outline">${items.length}</span><span class="caret">${open ? '▾' : '▸'}</span></div>
-        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="sess">${esc(a.session)}${(a.evidence || []).length ? ' · click for details' : ''}</div><div class="ev">${evidenceHtml(a)}</div></li>`; }).join('')}</ul>`;
+        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>Recommended response</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}</div></li>`; }).join('')}</ul>`;
       div.querySelector('.gh').onclick = () => { if (openGroups.has(k)) openGroups.delete(k); else openGroups.add(k); renderAlerts(alerts); };
       div.querySelectorAll('.items > li').forEach((el) => { el.onclick = (ev) => { if (ev.target.closest('a')) return; ev.stopPropagation(); const a = items[Number(el.dataset.i)]; const key = `${k}:${el.dataset.i}:${a.summary}`; if (openAlerts.has(key)) openAlerts.delete(key); else openAlerts.add(key); el.classList.toggle('open'); if (state.net) { state.net.selectNodes(a.nodes); state.net.fit({ nodes: a.nodes, animation: true }); } }; });
       box.appendChild(div);
@@ -513,7 +579,7 @@
     el.innerHTML = d.items.length ? d.items.map((i) => i.kind === 'prompt'
       ? `<li class="prompt ${i.flagged ? 'flagged' : ''}"><span class="ts">${fmt(i.ts)}</span><span class="who">${esc(i.via || '')}${i.model ? ' · ' + esc(i.model) : ''}</span><div class="txt">${esc(i.text || i.tool || '')}</div></li>`
       : `<li class="note ${esc(i.level || '')}"><span class="ts">${fmt(i.ts)}</span><span class="who">${esc(i.agent || '')}</span><div class="txt">${esc(i.text || '')}</div></li>`).join('')
-      : '<li class="dim">No prompts or narrative yet. Prompts arrive from the daemon\'s proxy; narrative from its commentary.</li>';
+      : '<li class="dim">No prompts captured for this endpoint in this time range.</li>';
     if (atBottom) el.scrollTop = el.scrollHeight;
   }
 
@@ -556,6 +622,7 @@
   $('#view').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; setView(b.dataset.v); };
   function setView(v) {
     view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
+    if (v === 'events' && state.device) closeDevice();
     $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events';
     if (v === 'events') loadEvents();
   }
@@ -594,7 +661,14 @@
   $('#back').onclick = closeDevice;
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && state.net.fit({ animation: true });
-  $('#reset').onclick = async () => { await fetch('/api/reset', { method: 'POST' }); closeDevice(); for (const t of state.tiles.values()) t.el.remove(); state.tiles.clear(); $('#wall').innerHTML = '<div id="wallEmpty">Waiting for devices…</div>'; };
+  $('#pathsOnly').onclick = () => { state.pathsOnly = !state.pathsOnly; state.pathsAuto = false; if (state.device) { state.net?.destroy(); state.net = null; openDevice(state.device, true); } };
+  // Header counters filter the wall: critical, high (includes critical), or everything.
+  document.querySelectorAll('button.stat[data-sev]').forEach((b) => b.onclick = () => {
+    state.sev = state.sev === b.dataset.sev ? '' : b.dataset.sev;
+    document.querySelectorAll('button.stat').forEach((x) => x.classList.toggle('on', !!state.sev && x.dataset.sev === state.sev));
+    if (state.device) closeDevice();
+    loadWall();
+  });
 
   // ---- live ---------------------------------------------------------------
   // Poll a tiny change log instead of holding an EventSource open per tab.

@@ -4,10 +4,14 @@
 // analyst can see exactly which process read what and where it went. Rules
 // only ever add alerts; nothing here can clear a kernel refusal.
 
-import { g, gr } from './db.js';
+import { gd, gr } from './db.js';
 
 // Each rule: id, severity, title, Cypher returning (nodes, edges, summary)
 // per match, scoped to one session via $session.
+// Only real network destinations count as egress (h.routable is set at ingest
+// by isRoutable; FalkorDB has no regex operator).
+const ROUTABLE = (h) => `coalesce(${h}.routable, true) = true`;
+
 export const RULES = [
   {
     id: 'secret-to-egress',
@@ -18,9 +22,10 @@ export const RULES = [
     // same tree (agent reads .env, child curl phones home). Up to 4 SPAWNED
     // hops between them, and the connect must come after the read.
     cypher: `
-      MATCH (s:Session {id: $session})-[:HAS]->(r:Process)-[rd:READ]->(f:File {sensitive: true})
-      MATCH path = (r)-[:SPAWNED*0..4]->(c:Process)-[cn:CONNECTED]->(h:Host)
-      WHERE h.approved = false AND cn.ts >= rd.ts
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(r:Process)-[rd:READ]->(f:File {sensitive: true})
+      WITH s, r, rd, f MATCH path = (r)-[:SPAWNED*0..4]->(c:Process)-[cn:CONNECTED]->(h:Host)
+      WHERE h.approved = false AND cn.ts >= rd.ts AND ${ROUTABLE('h')}
       RETURN f, h, r, c, rd, cn, nodes(path) AS pn, relationships(path) AS pr,
              'Read ' + f.path + ' then ' + c.name + ' connected to ' + h.name AS summary
       ORDER BY cn.ts DESC LIMIT 20`,
@@ -33,11 +38,18 @@ export const RULES = [
     // The deferred/laundered variant: the secret is encoded into a file
     // (a diagram, a config), and something later sends it.
     cypher: `
-      MATCH (s:Session {id: $session})-[:HAS]->(r:Process)-[rd:READ]->(f:File {sensitive: true})
-      MATCH (r)-[wr:WROTE]->(out:File)
-      WHERE wr.ts >= rd.ts AND out.sensitive = false
-      MATCH path = (r)-[:SPAWNED*0..4]->(c:Process)-[cn:CONNECTED]->(h:Host)
-      WHERE cn.ts >= wr.ts AND h.approved = false
+      // Rare things first: secret reads, then unapproved egress, and only then
+      // the write that sits between them (writes are the most numerous edge).
+      // WITH barriers pin the plan to start at the session index; without them
+      // FalkorDB starts from a scan of every File node.
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(r:Process)-[rd:READ]->(f:File {sensitive: true})
+      WITH s, r, rd, f MATCH path = (r)-[:SPAWNED*0..4]->(c:Process)-[cn:CONNECTED]->(h:Host {approved: false})
+      WHERE cn.ts >= rd.ts AND ${ROUTABLE('h')}
+      WITH s, r, rd, f, path, c, cn, h MATCH (r)-[wr:WROTE]->(out:File {sensitive: false})
+      WHERE wr.ts >= rd.ts AND wr.ts <= cn.ts
+      WITH f, h, r, c, rd, cn, path, collect([out, wr])[0] AS w
+      WITH f, h, r, c, rd, cn, path, w[0] AS out, w[1] AS wr
       RETURN f, out, h, r, c, rd, wr, cn, nodes(path) AS pn, relationships(path) AS pr,
              'Read ' + f.path + ', wrote ' + out.path + ', then ' + c.name + ' connected to ' + h.name AS summary
       ORDER BY cn.ts DESC LIMIT 20`,
@@ -81,10 +93,13 @@ export const RULES = [
     id: 'package-install',
     threat: 'T3',
     severity: 'medium',
-    title: 'Agent tree installed packages',
+    title: 'Agent installed a package',
     cypher: `
-      MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[ex:EXECUTED]->(f:File {installer: true})
-      OPTIONAL MATCH (p)-[:INSTALLED]->(k:Package)
+      // Only real installs: the install line must have produced packages.
+      // Running the toolchain (cargo test, npm run build) is not an install.
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(p:Process)-[:INSTALLED]->(k:Package)
+      WITH s, p, k MATCH (p)-[ex:EXECUTED]->(f:File {installer: true})
       WITH p, f, ex, collect({package: k.name, ecosystem: k.ecosystem, version: k.version, vuln_count: k.vuln_count, worst: k.worst, checked: k.osv_checked}) AS pk
       RETURN p, f, ex, [p, f] AS pn, [ex] AS pr,
              p.name + ' ran ' + ex.argv + (CASE WHEN ex.allowed THEN '' ELSE ' (refused)' END) AS summary,
@@ -141,7 +156,7 @@ export const RULES = [
       WITH s, r, count(DISTINCT f) AS files, max(rd.ts) AS lastRead
       WHERE files >= 25
       MATCH path = (r)-[:SPAWNED*0..4]->(c:Process)-[cn:CONNECTED]->(h:Host)
-      WHERE h.approved = false AND cn.ts >= lastRead
+      WHERE h.approved = false AND cn.ts >= lastRead AND ${ROUTABLE('h')}
       RETURN r, c, h, cn, nodes(path) AS pn, relationships(path) AS pr,
              r.name + ' read ' + toString(files) + ' files, then ' + c.name + ' connected to ' + h.name AS summary
       ORDER BY cn.ts DESC LIMIT 10`,
@@ -175,7 +190,7 @@ export const RULES = [
     title: 'Outbound request refused by the proxy (DLP or policy)',
     cypher: `
       MATCH (s:Session {id: $session})-[:HAS]->(p:Process)-[e:CONNECTED|SENT]->(h:Host)
-      WHERE e.allowed = false
+      WHERE e.allowed = false AND ${ROUTABLE('h')}
       RETURN p, h, e, [p, h] AS pn, [e] AS pr,
              p.name + ' → ' + h.name + ' refused' + (CASE WHEN e.reason IS NULL OR e.reason = '' THEN '' ELSE ': ' + e.reason END) AS summary
       ORDER BY e.ts DESC LIMIT 20`,
@@ -198,6 +213,28 @@ export const THREATS = {
   T1: 'Prompt Injection', T2: 'Credential Exfiltration', T3: 'Supply Chain Compromise', T4: 'Privilege Escalation',
   T5: 'Data Exfiltration', T6: 'Intent vs Behavior Mismatch', T7: 'Behavioral Anomaly', T8: 'C2 / Persistence', T9: 'AI Framework CVE Exploitation',
 };
+// MITRE ATT&CK (and ATLAS for model-layer threats) technique per threat, so
+// alerts line up with what a SOC already tracks.
+export const ATTACK = {
+  T1: 'ATLAS AML.T0051 LLM Prompt Injection', T2: 'T1552.001 Credentials in Files · T1567 Exfiltration Over Web Service',
+  T3: 'T1195.001 Compromise Software Dependencies', T4: 'T1548 Abuse Elevation Control Mechanism',
+  T5: 'T1048 Exfiltration Over Alternative Protocol', T8: 'T1105 Ingress Tool Transfer · T1562 Impair Defenses',
+  T9: 'T1203 Exploitation for Client Execution',
+};
+// First response an analyst should take for each threat.
+export const RESPONSE = {
+  T1: 'Pause the agent session and review the injected instruction file or prompt before it runs again.',
+  T2: 'Rotate the credential that was read, block the destination host, and contain the session.',
+  T3: 'Pin or remove the package, upgrade to the fixed version, and re-scan the lockfile.',
+  T4: 'Revoke the elevated tool or sudo grant and confirm the session owner approved it.',
+  T5: 'Block the destination, check what left the endpoint, and contain the session.',
+  T6: 'Compare the stated task with the actions taken and contain the session if they diverge.',
+  T7: 'Review the session timeline against the agent’s usual baseline.',
+  T8: 'Isolate the endpoint, remove the dropped binary, and check the daemon’s integrity.',
+  T9: 'Patch the AI framework to the fixed version and review sessions that used it.',
+};
+const enrich = (a) => ({ ...a, attack: ATTACK[a.threat], response: RESPONSE[a.threat] });
+
 const APPROVED_MCP = (process.env.APPROVED_MCP || 'filesystem,github,postgres').split(',').map((s) => s.trim()).filter(Boolean);
 
 function nodeId(n) { return n.id; }
@@ -208,6 +245,20 @@ function nodeId(n) { return n.id; }
 // are cached per session and recomputed only when that session ingests new
 // events (see invalidate). Reads from the wall never touch the rules.
 const cache = new Map();   // session -> alerts (unwindowed)
+// The cache is saved to disk so a restart shows alerts immediately instead of
+// waiting for every session to be recomputed.
+import fs from 'node:fs';
+const CACHE_FILE = process.env.ALERT_CACHE || new URL('../data/alerts-cache.json', import.meta.url).pathname;
+try { for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')))) cache.set(k, v); } catch { /* first run */ }
+let saveTimer;
+function saveCache() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { fs.mkdirSync(new URL('.', 'file://' + CACHE_FILE), { recursive: true }); fs.writeFileSync(CACHE_FILE + '.tmp', JSON.stringify(Object.fromEntries(cache))); fs.renameSync(CACHE_FILE + '.tmp', CACHE_FILE); }
+    catch (e) { console.error('alert cache save', e.message); }
+  }, 2000);
+}
+export function forget(session) { if (session ? cache.delete(session) : (cache.clear(), true)) saveCache(); }
 export function invalidate(session) { /* keep serving the old result until the job replaces it */ }
 export function hasCache(session) { return cache.has(session); }
 export function CACHE_KEYS() { return cache.keys(); }
@@ -219,18 +270,19 @@ export function CACHE_KEYS() { return cache.keys(); }
 export async function detect(session, win, { cachedOnly = false } = {}) {
   let all = cache.get(session);
   if (!all) { if (cachedOnly) return []; all = await detectUncached(session); cache.set(session, all); }
-  if (!win) return all;
-  return all.filter((a) => !a.ts.length || a.ts.some((t) => t >= win.from && t <= win.to));
+  if (!win) return all.map(enrich);
+  // Undated findings only show in the all-time view, never in a dated window.
+  return all.filter((a) => (a.ts.length ? a.ts.some((t) => t >= win.from && t <= win.to) : !win.from)).map(enrich);
 }
 
-export async function recompute(session) { const all = await detectUncached(session); cache.set(session, all); return all; }
+export async function recompute(session) { const all = await detectUncached(session); cache.set(session, all); saveCache(); return all; }
 
 async function detectUncached(session) {
-  const graph = g();
+  const graph = gd();
   const alerts = [];
   for (const rule of RULES) {
     let res;
-    try { res = await graph.roQuery(rule.cypher, { params: { session, approvedMcp: APPROVED_MCP }, TIMEOUT: 4000 }); }
+    try { res = await graph.roQuery(rule.cypher, { params: { session, approvedMcp: APPROVED_MCP }, TIMEOUT: 1500 }); }
     catch (e) { console.error(`rule ${rule.id} on ${session}: ${e.message}`); continue; }
     for (const row of res.data || []) {
       const pn = (row.pn || []).map(nodeId);
@@ -242,9 +294,11 @@ async function detectUncached(session) {
         else if ('relationshipType' in v) pr.push(v.id);
       }
       const ts = [...(row.pr || []), ...Object.values(row).filter((v) => v && typeof v === 'object' && 'relationshipType' in v)].map((e) => e.properties?.ts).filter(Boolean);
-      if (!ts.length && row.s?.properties?.started) ts.push(row.s.properties.started);   // session-level findings date from the session start
+      // Session-level findings date from the session start, or the first process seen.
+      if (!ts.length) { const t0 = row.s?.properties?.started || row.p?.properties?.first_ts; if (t0) ts.push(t0); }
+      const pathEdges = [...(row.pr || []), ...Object.values(row).filter((v) => v && typeof v === 'object' && 'relationshipType' in v)];
       alerts.push({
-        ts,
+        ts, blocked: pathEdges.some((e) => e.properties?.allowed === false),
         rule: rule.id, threat: rule.threat, threatName: THREATS[rule.threat], severity: rule.severity, title: rule.title, summary: row.summary,
         evidence: row.evidence || undefined, subject: row.subject || undefined,
         nodes: [...new Set(pn)], edges: [...new Set(pr)],
@@ -280,7 +334,17 @@ export async function detectDevice(deviceId, win) {
   const graph = gr();
   const r = await graph.roQuery('MATCH (d:Device {id: $id})-[:RUNS]->(s:Session) RETURN s.id AS id', { params: { id: deviceId } });
   const out = [];
-  for (const row of r.data || []) for (const a of await detect(row.id, win, { cachedOnly: true })) out.push({ session: row.id, ...a });
+  // The same finding in many sessions (e.g. every session of an agent touching
+  // the same secret) is one alert with a session count, not N rows.
+  const byKey = new Map();
+  for (const row of r.data || []) for (const a of await detect(row.id, win, { cachedOnly: true })) {
+    const k = `${a.rule}|${a.summary}`; const prev = byKey.get(k);
+    if (!prev) { byKey.set(k, { session: row.id, sessions: 1, ...a }); continue; }
+    prev.sessions += 1; prev.ts = [...prev.ts, ...a.ts];
+    prev.nodes = [...new Set([...prev.nodes, ...a.nodes])]; prev.edges = [...new Set([...prev.edges, ...a.edges])];
+    if (a.blocked === false) prev.blocked = false;
+  }
+  out.push(...byKey.values());
   const order = { critical: 0, high: 1, medium: 2 };
   out.sort((a, b) => order[a.severity] - order[b.severity]);
   return out;

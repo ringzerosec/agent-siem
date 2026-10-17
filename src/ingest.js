@@ -45,7 +45,21 @@ export function redact(text) {
   return t;
 }
 
-export function isSensitive(path) { return SENSITIVE.some((r) => r.test(path)); }
+// Source, build output and package caches are code, not credentials, even
+// when the file is called tokenize.js or secrets-page.css.
+const NOT_SECRET = [
+  /\/(node_modules|site-packages|dist-packages|__pycache__|\.cargo\/registry|\.npm\/_cacache|dist|build|target)\//,
+  /\.(m?[jt]sx?|cjs|d\.ts|css|scss|map|pyc|py|rs|go|java|kt|rb|php|html|md|svg|png|jpg|woff2?|wasm)$/i,
+  /\.env\.(example|sample|template|dist)$/i,
+];
+export function isSensitive(path) {
+  if (/\/\.env(\.[A-Za-z0-9_-]+)?$/.test(path) && !NOT_SECRET[2].test(path)) return true;
+  if (NOT_SECRET.some((r) => r.test(path))) return false;
+  // Keyword matches ("token", "secret") only count on absolute paths; a bare
+  // relative name like "token-types" is usually a package, not a credential.
+  if (!path.startsWith('/') && !path.startsWith('~')) return SENSITIVE.slice(0, -1).some((r) => r.test('/' + path));
+  return SENSITIVE.some((r) => r.test(path));
+}
 export function isInstructionFile(path) { return INSTRUCTION_FILES.some((r) => r.test(path)); }
 
 const APPROVED_HOSTS = new Set(
@@ -53,6 +67,12 @@ const APPROVED_HOSTS = new Set(
     .split(',').map((s) => s.trim()).filter(Boolean),
 );
 export function isApprovedHost(name) { return APPROVED_HOSTS.has(name); }
+// A real network destination, not a parse fragment ("0.0.0.0", ".so.1", "Root_CA.crt").
+export function isRoutable(name) {
+  const n = String(name || '');
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(n)) return n !== '0.0.0.0' && !n.startsWith('127.');
+  return /^([A-Za-z0-9-]+\.)+[A-Za-z]{2,24}$/.test(n) && !/\.(crt|pem|so|key|cer|der|js|json|txt|md|log)$/i.test(n) && n !== 'localhost';
+}
 
 function base(cmd) {
   const first = (cmd || '').trim().split(/\s+/)[0] || '';
@@ -65,7 +85,7 @@ export async function ingestEvent(ev) {
   const graph = g();
   const session = String(ev.session);
   const device = String(ev.device || 'unknown-device');
-  const owner = ev.owner || '';
+  const owner = ev.owner || null;   // null keeps an owner set earlier
   const agent = ev.agent || 'unknown-agent';
   const pid = Number(ev.pid);
   const key = `${session}:${pid}`;
@@ -75,7 +95,8 @@ export async function ingestEvent(ev) {
 
   await graph.query(
     `MERGE (d:Device {id: $device})
-       ON CREATE SET d.owner = $owner, d.first_ts = $ts, d.simulated = $simulated
+       ON CREATE SET d.first_ts = $ts, d.simulated = $simulated
+     SET d.owner = coalesce($owner, d.owner)
      MERGE (s:Session {id: $session})
        ON CREATE SET s.agent = $agent, s.started = $ts, s.device = $device
      SET s.agent = coalesce(s.agent, $agent), s.device = coalesce(s.device, $device), s.state = coalesce($state, s.state), s.privileged = coalesce($priv, s.privileged), s.privileged_reason = coalesce($preason, s.privileged_reason)
@@ -133,9 +154,9 @@ export async function ingestEvent(ev) {
       await graph.query(
         `MATCH (p:Process {key: $key})
          MERGE (h:Host {name: $host})
-           ON CREATE SET h.approved = $approved
+           ON CREATE SET h.approved = $approved, h.routable = $routable
          CREATE (p)-[:CONNECTED {ts: $ts, event: $id, allowed: $allowed, port: $port}]->(h)`,
-        { params: { key, host, approved: isApprovedHost(host), ts, id: ev.id || '', allowed, port: Number(port) || 443 } },
+        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), ts, id: ev.id || '', allowed, port: Number(port) || 443 } },
       );
       break;
     }
@@ -162,9 +183,9 @@ export async function ingestEvent(ev) {
       const [host, port] = target.split(':');
       await graph.query(
         `MATCH (p:Process {key: $key})
-         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved
+         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved, h.routable = $routable
          CREATE (p)-[:SENT {ts: $ts, event: $id, allowed: $allowed, port: $port, reason: $reason}]->(h)`,
-        { params: { key, host, approved: isApprovedHost(host), ts, id: ev.id || '', allowed, port: Number(port) || 443, reason: ev.reason || '' } },
+        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), ts, id: ev.id || '', allowed, port: Number(port) || 443, reason: ev.reason || '' } },
       );
       break;
     }
@@ -174,10 +195,10 @@ export async function ingestEvent(ev) {
       const longest = Math.max(...labels.map((l) => l.length));
       await graph.query(
         `MATCH (p:Process {key: $key})
-         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved
+         MERGE (h:Host {name: $host}) ON CREATE SET h.approved = $approved, h.routable = $routable
          SET h.longest_label = $longest, h.labels = $nlabels
          CREATE (p)-[:RESOLVED {ts: $ts, event: $id, allowed: $allowed}]->(h)`,
-        { params: { key, host: name, approved: isApprovedHost(name), longest, nlabels: labels.length, ts, id: ev.id || '', allowed } },
+        { params: { key, host: name, approved: isApprovedHost(name), routable: isRoutable(name), longest, nlabels: labels.length, ts, id: ev.id || '', allowed } },
       );
       break;
     }

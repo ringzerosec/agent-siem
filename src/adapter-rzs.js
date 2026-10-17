@@ -1,9 +1,10 @@
 // adapter-rzs.js — pull real activity from installed Ring Zero Security daemons
 // and feed it to the graph. One daemon = one device on the wall.
 //
-//   RZS=priya-laptop=http://localhost:7700,build-vm=http://10.0.0.5:7700 node src/adapter-rzs.js
+//   RZS=ENG-MBP-0142=http://localhost:7700,build-vm=http://10.0.0.5:7700 node src/adapter-rzs.js
 //   RZS_TOKEN=...   bearer token if the daemon API requires one
-//   RZS_TOKEN_priya_laptop=...   per-device token (device id with - → _)
+//   RZS_TOKEN_ENG_MBP_0142=...   per-device token (device id with - → _)
+//   RZS_TEAM_ENG_MBP_0142="Platform Engineering"   team shown on the tile (default: daemon user)
 //   RZS_POLL_MS=2000
 //   RZS_SINCE_HOURS=24  skip sessions that ended before this window
 //
@@ -95,8 +96,9 @@ async function pollDevice(t) {
   headers = headersFor(t.device);
   const ids = seen.get(t.device) || new Set();
   seen.set(t.device, ids);
-  let owner = '';
-  try { const h = await get(`${t.url}/api/v1/health`); owner = h.user || h.hostname || ''; } catch { /* optional */ }
+  // Tile headline: RZS_TEAM_<device> if set (e.g. "Build Infrastructure"), else the daemon's user/host.
+  let owner = process.env[`RZS_TEAM_${t.device.replace(/[^A-Za-z0-9]/g, '_')}`] || '';
+  if (!owner) { try { const h = await get(`${t.url}/api/v1/health`); owner = h.user || h.hostname || ''; } catch { /* optional */ } }
 
   // MCP servers from the inventory scan → (:McpServer) nodes
   try {

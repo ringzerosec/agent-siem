@@ -67,16 +67,19 @@ app.get('/api/stream', (_req, res) => res.status(204).end());
 // at most once every 10 s. Page reads only ever see cached results, so rule
 // queries can never queue a page load.
 const dirtySessions = new Set(); const lastRun = new Map(); let detectBusy = false;
-function scheduleDetect(session) { dirtySessions.add(session); }
+const hotSessions = new Set();   // sessions with fresh events run before the startup backlog
+function scheduleDetect(session, hot = true) { (hot ? hotSessions : dirtySessions).add(session); }
 setInterval(async () => {
-  if (detectBusy || !dirtySessions.size) return;
+  if (detectBusy || (!dirtySessions.size && !hotSessions.size)) return;
   const now = Date.now();
-  const next = [...dirtySessions].find((s) => now - (lastRun.get(s) || 0) >= 10000);
+  const ready = (s) => now - (lastRun.get(s) || 0) >= 10000;
+  let next = [...hotSessions].find(ready), from = hotSessions;
+  if (!next) { next = [...dirtySessions].find(ready); from = dirtySessions; }
   if (!next) return;
-  dirtySessions.delete(next); lastRun.set(next, now); detectBusy = true;
+  from.delete(next); dirtySessions.delete(next); lastRun.set(next, now); detectBusy = true;
   try {
     const alerts = await recompute(next);
-    const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session: next } });
+    const dr = await gr().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session: next } });
     broadcast({ type: 'update', device: dr.data?.[0]?.id, session: next, alerts: alerts.length });
   } catch (e) { console.error('detect', next, e.message); }
   finally { detectBusy = false; }
@@ -222,7 +225,7 @@ app.delete('/api/device/:id', async (req, res, next) => {
 });
 
 app.post('/api/reset', async (_req, res, next) => {
-  try { await wipe(); for (const k of [...(await import('./detect.js')).CACHE_KEYS()]) invalidate(k); broadcast({ type: 'reset' }); res.json({ ok: true }); } catch (e) { next(e); }
+  try { await wipe(); (await import('./detect.js')).forget(); broadcast({ type: 'reset' }); res.json({ ok: true }); } catch (e) { next(e); }
 });
 
 // --- reads ---------------------------------------------------------------
@@ -250,6 +253,7 @@ app.get('/api/devices', async (req, res, next) => {
         alerts: alerts.length,
         critical: alerts.filter((a) => a.severity === 'critical').length,
         high: alerts.filter((a) => a.severity === 'high').length,
+        contained: alerts.filter((a) => a.blocked === true).length,
         threats,
         top: alerts[0]?.summary || null,
       });
@@ -284,6 +288,15 @@ app.get('/api/graph/device/:id', async (req, res, next) => {
       if (row.e2) edges.set(row.e2.id, row.e2);
     }
     const alerts = await detectDevice(id, { from, to });
+    // Every node and edge on an alert path is always in the picture, even when
+    // the edge cap cut it (large endpoints have tens of thousands of edges).
+    const needN = [...new Set(alerts.flatMap((a) => a.nodes))].filter((n) => !nodes.has(n));
+    const needE = [...new Set(alerts.flatMap((a) => a.edges))].filter((e) => !edges.has(e));
+    if (needN.length) for (const row of (await gr().roQuery('MATCH (n) WHERE id(n) IN $ids RETURN n', { params: { ids: needN } })).data || []) nodes.set(row.n.id, row.n);
+    if (needE.length) {
+      const src = [...new Set(alerts.flatMap((a) => a.nodes))];
+      for (const row of (await gr().roQuery('MATCH (a)-[e]->() WHERE id(a) IN $src AND id(e) IN $ids RETURN e', { params: { src, ids: needE } })).data || []) edges.set(row.e.id, row.e);
+    }
     res.json({ device: id, nodes: [...nodes.values()], edges: [...edges.values()], alerts, window: { from, to } });
   } catch (e) { next(e); }
 });
@@ -370,7 +383,22 @@ app.use((err, _req, res, _next) => {
 });
 
 await connect();
+// Re-classify stored files when the sensitive-path rules change.
+{
+  const { isSensitive } = await import('./ingest.js');
+  const r = await g().roQuery('MATCH (f:File) WHERE f.sensitive = true RETURN f.path AS path');
+  const fixed = (r.data || []).map((x) => x.path).filter((p) => !isSensitive(p));
+  for (let i = 0; i < fixed.length; i += 500) await g().query('UNWIND $paths AS p MATCH (f:File {path: p}) SET f.sensitive = false', { params: { paths: fixed.slice(i, i + 500) } });
+  if (fixed.length) console.log(`reclassified ${fixed.length} files as not sensitive`);
+}
+{
+  const { isRoutable } = await import('./ingest.js');
+  const r = await g().roQuery('MATCH (h:Host) WHERE h.routable IS NULL RETURN h.name AS name');
+  const rows = (r.data || []).map((x) => ({ name: x.name, ok: isRoutable(x.name) }));
+  for (let i = 0; i < rows.length; i += 500) await g().query('UNWIND $rows AS x MATCH (h:Host {name: x.name}) SET h.routable = x.ok', { params: { rows: rows.slice(i, i + 500) } });
+  if (rows.length) console.log(`classified ${rows.length} hosts (${rows.filter((x) => !x.ok).length} not routable)`);
+}
 if (await bus.start()) bus.consume({ onEvents: writeEvents, onMcp: writeMcp, onNotes: writeNotes });
-{ const r = await g().roQuery('MATCH (s:Session) RETURN s.id AS id'); for (const row of r.data || []) scheduleDetect(row.id); }
+{ const r = await gr().roQuery('MATCH (s:Session) RETURN s.id AS id ORDER BY coalesce(s.started, 0) DESC'); for (const row of r.data || []) scheduleDetect(row.id, false); }   // newest sessions first
 const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}`));
 srv.keepAliveTimeout = 5000; srv.headersTimeout = 11000;
