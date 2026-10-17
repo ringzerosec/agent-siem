@@ -92,7 +92,7 @@ Actions are written back into the graph as `(:Action)`, `(:Ticket)` and
 why the agent called a tool, what came back, what it did.
 
 ```bash
-ANTHROPIC_API_KEY=... NATS_URL=nats://localhost:4222 npm start   # Claude agent (TRIAGE_MODEL, default claude-fable-5-1)
+ANTHROPIC_API_KEY=... NATS_URL=nats://localhost:4222 npm start   # Claude agent (TRIAGE_MODEL, default claude-opus-5-5)
 ```
 
 Without a key, the same investigation runs as a fixed **playbook** over the

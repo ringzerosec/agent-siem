@@ -9,7 +9,9 @@
 // model's reasoning) is kept so the UI can show how it reached its answer.
 //
 //   ANTHROPIC_API_KEY=...   enables the Claude agent
-//   TRIAGE_MODEL=claude-fable-5-1  (default)
+//   TRIAGE_MODEL=claude-opus-5-5   (default; Fable 5.1's dual-use safeguards
+//                                    decline credential-exfiltration evidence)
+//   TRIAGE_FALLBACK_MODEL=claude-opus-5-5  used if the chosen model refuses
 //
 // Without a key it runs the same investigation as a fixed playbook over the
 // same MCP tools, and says so in every result ("mode: playbook").
@@ -18,7 +20,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer, TOOL_KIND } from './mcp-tools.js';
 
-const MODEL = process.env.TRIAGE_MODEL || 'claude-fable-5-1';
+const MODEL = process.env.TRIAGE_MODEL || 'claude-opus-5-5';
+const FALLBACK = process.env.TRIAGE_FALLBACK_MODEL || 'claude-opus-5-5';
 const MAX_TURNS = Number(process.env.TRIAGE_MAX_TURNS || 14);
 
 const SYSTEM = `You are the triage agent in Agent SIEM, a security console for AI agents running on employee endpoints. Every action an agent took (process spawned, file read or written, program executed, network connection, MCP tool call) is an edge in a FalkorDB provenance graph. Ring Zero Security enforces policy on each endpoint and may already have refused a step; "allowed": false on an edge means it was blocked.
@@ -85,9 +88,19 @@ async function runAgent(job, client, call) {
   const { tools } = await client.listTools();
   const claudeTools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
   const messages = [{ role: 'user', content: `Triage alert ${job.alertId} on endpoint ${job.device}.` }];
+  let model = MODEL;
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 2000, system: SYSTEM, tools: claudeTools, messages });
+    let resp = await anthropic.messages.create({ model, max_tokens: 2000, system: SYSTEM, tools: claudeTools, messages });
+    // A model that declines (stop_reason "refusal", no content) hands the same
+    // conversation to the fallback model instead of ending the run silently.
+    if (resp.stop_reason === 'refusal' && model !== FALLBACK) {
+      job.steps.push({ kind: 'thought', text: `${model} declined to continue; handing the investigation to ${FALLBACK}.`, ts: Date.now() });
+      model = FALLBACK; job.model = `${MODEL} → ${FALLBACK}`;
+      resp = await anthropic.messages.create({ model, max_tokens: 2000, system: SYSTEM, tools: claudeTools, messages });
+    }
+    if (resp.stop_reason === 'refusal') { job.steps.push({ kind: 'thought', text: `${model} declined to continue this investigation.`, ts: Date.now() }); break; }
     messages.push({ role: 'assistant', content: resp.content });
+    job.trace = [...(job.trace || []), { turn, stop: resp.stop_reason, blocks: resp.content.map((b) => b.type) }];
     const results = [];
     let why = '';
     for (const block of resp.content) {
