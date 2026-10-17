@@ -1023,7 +1023,15 @@
       const ai = await (await fetch(`/api/ai-usage?device=${encodeURIComponent(id)}`)).json();
       const aiRows = ai.map((r) => `<div class="row ${r.approved ? '' : 'bad'}"><span class="n">${esc(r.host)}</span><span class="badge ${r.approved ? 'success' : 'destructive'}">${r.approved ? 'approved' : 'shadow'}</span>
           <span class="m">${esc(r.provider)}${r.gateway ? ' · gateway' : ''} · ${r.calls} call${r.calls === 1 ? '' : 's'} · ${esc(r.processes.join(', '))}${r.unregistered.length ? ` · <b style="color:#b91c1c">unregistered: ${esc(r.unregistered.join(', '))}</b>` : ''}</span></div>`).join('') || '<div class="empty">No AI traffic seen.</div>';
-      $('#surface').innerHTML = `<div class="sh">AI services</div>${aiRows}<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
+      let actRows = '';
+      try {
+        const acts = await (await fetch(`/api/actions?device=${encodeURIComponent(id)}`)).json();
+        if (acts.length) actRows = `<div class="sh">Enforcement on the endpoint</div>` + acts.map((x) => {
+          const st = x.status === 'applied' ? 'success' : x.status === 'failed' ? 'destructive' : 'warning';
+          return `<div class="row"><span class="n">${esc(x.type.replace('_', ' '))} ${esc(x.target)}</span><span class="badge ${st}">${esc(x.status || 'queued')}</span><span class="m">${esc(x.reason || '')}${x.result ? ' · ' + esc(x.result) : ''}</span></div>`;
+        }).join('');
+      } catch {}
+      $('#surface').innerHTML = `${actRows}<div class="sh">AI services</div>${aiRows}<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
     } catch { $('#surface').innerHTML = '<div class="empty">Could not load.</div>'; }
   }
   function closeDevice() {

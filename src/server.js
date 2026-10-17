@@ -270,6 +270,56 @@ app.post('/api/owners', async (req, res, next) => { try { const rows = asArray(r
 app.post('/api/scan', async (req, res, next) => { try { res.json(await startDeepScan(req.body?.devices)); } catch (e) { next(e); } });
 app.get('/api/scan/:job', async (req, res, next) => { try { res.json(await scanStatus(req.params.job)); } catch (e) { next(e); } });
 app.get('/api/commands', async (req, res, next) => { try { res.json(await pendingCommands(String(req.query.devices || '').split(',').filter(Boolean))); } catch (e) { next(e); } });
+
+// --- actuator: hand queued block/contain actions to the endpoint adapter ------
+// The adapter (src/adapter-rzs.js) polls this per device, applies each action
+// on that device's Ring Zero Security daemon (POST /api/v1/verdicts), and posts
+// the outcome back. block_host targets a hostname; the daemon enforces on IPs,
+// so we attach the host's resolved non-shared IPs from the intel graph.
+// Enforcement actions on an endpoint (queued/applied/failed), newest first.
+app.get('/api/actions', async (req, res, next) => {
+  try {
+    const device = String(req.query.device || '');
+    const r = await gr().roQuery(
+      `MATCH (a:Action {device: $device}) WHERE a.type IN ['block_host', 'contain_session']
+       RETURN a.type AS type, a.target AS target, a.status AS status, a.reason AS reason, a.result AS result, a.ts AS ts, a.applied_at AS applied_at
+       ORDER BY a.ts DESC LIMIT 20`, { params: { device } });
+    res.json(r.data || []);
+  } catch (e) { next(e); }
+});
+app.get('/api/actions/pending', async (req, res, next) => {
+  try {
+    const device = String(req.query.device || '');
+    const r = await gr().roQuery(
+      `MATCH (a:Action {device: $device, status: 'queued'})
+       WHERE a.type IN ['block_host', 'contain_session']
+       RETURN ID(a) AS id, a.type AS type, a.target AS target, a.reason AS reason, a.alert AS alert, a.ts AS ts
+       ORDER BY a.ts LIMIT 20`, { params: { device } });
+    const out = [];
+    for (const a of r.data || []) {
+      let ips;
+      if (a.type === 'block_host') {
+        const ir = await gr().roQuery(
+          `MATCH (h:Host {name: $host})-[:RESOLVES_TO]->(i:Ip) RETURN collect(DISTINCT i.addr) AS ips`, { params: { host: a.target } });
+        ips = ir.data?.[0]?.ips || [];
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(a.target)) ips = [...new Set([a.target, ...ips])];
+      }
+      out.push({ ...a, ips });
+    }
+    res.json(out);
+  } catch (e) { next(e); }
+});
+app.post('/api/actions/:id/result', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id); const b = req.body || {};
+    await g().query(
+      `MATCH (a:Action) WHERE ID(a) = $id
+       SET a.status = $status, a.applied_at = $ts, a.result = $result, a.daemon_rules = $rules`,
+      { params: { id, status: b.ok ? 'applied' : 'failed', ts: Date.now(), result: String(b.detail || '').slice(0, 500), rules: JSON.stringify(b.installed || []) } });
+    broadcast({ type: 'update', device: String(b.device || '') });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 app.post('/api/scan-results', async (req, res, next) => { try { const b = req.body || {}; await storeScan(String(b.command || ''), String(b.device), b.results || {}); broadcast({ type: 'update', device: String(b.device) }); res.json({ ok: true }); } catch (e) { next(e); } });
 app.get('/api/inventory', async (_req, res, next) => { try { res.json(await fleetInventory()); } catch (e) { next(e); } });
 app.post('/api/policies/propose', async (_req, res, next) => { try { res.json(await proposePolicies()); } catch (e) { next(e); } });

@@ -44,6 +44,46 @@ function headersFor(device) {
   const t = process.env[`RZS_TOKEN_${device.replace(/[^A-Za-z0-9]/g, '_')}`] || TOKEN;
   return t ? { authorization: `Bearer ${t}` } : {};
 }
+// Full-scope token for enforcement (block/contain). Separate from the
+// read-only token used for polling: without it, actions are left queued.
+const ADMIN_TOKEN = process.env.RZS_ADMIN_TOKEN || '';
+function adminHeadersFor(device) {
+  const t = process.env[`RZS_ADMIN_TOKEN_${device.replace(/[^A-Za-z0-9]/g, '_')}`] || ADMIN_TOKEN;
+  return t ? { authorization: `Bearer ${t}`, 'content-type': 'application/json' } : null;
+}
+
+// Actuator: apply the console's approved block/contain actions on this daemon.
+// block_host -> block each resolved IP (the daemon enforces on IPs, refuses
+// hostnames); contain_session -> contain that session. Each result is posted
+// back so the console shows applied/failed. Idempotent: the console only hands
+// back actions still in 'queued'.
+async function runActions(t) {
+  const admin = adminHeadersFor(t.device);
+  const r = await fetch(`${API}/api/actions/pending?device=${encodeURIComponent(t.device)}`, { headers: AUTH, signal: AbortSignal.timeout(6000) });
+  if (!r.ok) return;
+  const actions = await r.json();
+  for (const a of actions) {
+    if (!admin) { await post(`/api/actions/${a.id}/result`, { ok: false, device: t.device, detail: 'no admin token for this device (set RZS_ADMIN_TOKEN_' + t.device.replace(/[^A-Za-z0-9]/g, '_') + ')' }); continue; }
+    const verdicts = [];
+    if (a.type === 'block_host') {
+      const ips = (a.ips || []).filter((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip));
+      if (!ips.length) { await post(`/api/actions/${a.id}/result`, { ok: false, device: t.device, detail: `no resolved IPs for ${a.target}; the daemon enforces on IPs` }); continue; }
+      for (const ip of ips) verdicts.push({ type: 'block', target: ip, rationale: `${a.reason || 'blocked'} (${a.target})` });
+    } else if (a.type === 'contain_session') {
+      verdicts.push({ type: 'contain_session', session_id: a.target, rationale: a.reason || 'contained' });
+    } else continue;
+    try {
+      const vr = await fetch(`${t.url}/api/v1/verdicts`, { method: 'POST', headers: admin, body: JSON.stringify({ source: 'agent-siem', reference: `action-${a.id}`, verdicts }), signal: AbortSignal.timeout(10000) });
+      const body = await vr.json().catch(() => ({}));
+      const installed = body.installed || [];
+      const ok = vr.ok && installed.length > 0;
+      await post(`/api/actions/${a.id}/result`, { ok, device: t.device, installed, detail: ok ? `installed ${installed.length} rule(s)` : (body.refused?.join('; ') || `daemon ${vr.status}`) });
+      process.stdout.write(`${t.device}:${a.type}${ok ? '+' : '!'} `);
+    } catch (e) {
+      await post(`/api/actions/${a.id}/result`, { ok: false, device: t.device, detail: e.message });
+    }
+  }
+}
 let headers = {};
 async function get(url) {
   const r = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
@@ -167,6 +207,7 @@ async function pollDevice(t) {
 
   try { await scanSkills(t); } catch (e) { console.error(`${t.device}: skill scan: ${e.message}`); }
   try { await runCommands(t); } catch (e) { console.error(`${t.device}: commands: ${e.message}`); }
+  try { await runActions(t); } catch (e) { console.error(`${t.device}: actions: ${e.message}`); }
 
   let sessions = [];
   try { sessions = await get(`${t.url}/api/v1/sessions`); if (!Array.isArray(sessions)) sessions = sessions.sessions || []; } catch (e) { console.error(`${t.device}: sessions: ${e.message}`); }
