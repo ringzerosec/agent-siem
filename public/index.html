@@ -117,7 +117,10 @@
   .tile .agents { font-family: var(--mono); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tile .agents:not(:empty)::before { content: '·'; margin-right: 6px; }
   .tile .sim { font: 500 9.5px var(--mono); text-transform: uppercase; letter-spacing: .04em; border: 1px dashed var(--border); border-radius: 4px; padding: 0 4px; color: var(--muted-foreground); }
-  .tile .net { flex: 1; min-height: 0; background: var(--canvas); }
+  .tile .net { flex: 1; min-height: 0; background: var(--canvas); position: relative; }
+  .tile .loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11.5px; color: var(--muted-foreground); z-index: 1; background: linear-gradient(90deg, var(--canvas) 0%, var(--accent) 50%, var(--canvas) 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+  @media (prefers-reduced-motion: reduce) { .tile .loading { animation: none; } }
   .tile .ft { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-height: 36px; padding: 7px 12px; border-top: 1px solid var(--border); background: var(--card); font-size: 11px; color: var(--muted-foreground); }
   .tile .spec { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
   .tile .spec div { display: flex; flex-direction: column; line-height: 1.2; }
@@ -166,6 +169,7 @@
   .group.critical .gh { box-shadow: inset 3px 0 0 var(--destructive); }
   .group.high .gh { box-shadow: inset 3px 0 0 var(--event-pii); }
   .group.medium .gh { box-shadow: inset 3px 0 0 var(--muted-foreground); }
+  .group.info .gh { box-shadow: inset 3px 0 0 var(--border); } .group.info .gt { font-weight: 500; color: var(--muted-foreground); }
   .items { list-style: none; margin: 0; padding: 0; }
   /* 21st Alert: bordered row, icon top-left, title + description */
   .alert { position: relative; padding: 10px 12px 10px 36px; border-top: 1px solid var(--border); cursor: pointer; }
@@ -250,6 +254,7 @@
       <span class="chip" id="title"></span>
       <button class="btn sm" id="whole" hidden>← whole device</button>
       <button class="btn sm" id="fit">Fit</button>
+      <button class="btn sm" id="spotClear" hidden>Show whole graph</button>
       <button class="btn sm" id="pathsOnly" title="Large endpoints open on alert paths only" aria-pressed="false">Alert paths only</button>
     </div>
     <div id="graph"></div>
@@ -385,17 +390,23 @@
   // Force layout, settled once and then frozen: the picture organises itself
   // but never jiggles. New nodes get a short settle, then freeze again.
   const FORCE = (mini) => ({
-    physics: { enabled: false, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: mini ? -14 : -160, springLength: mini ? 36 : 190, springConstant: mini ? 0.08 : 0.05, centralGravity: mini ? 0.03 : 0.006, damping: 0.6, avoidOverlap: mini ? 0 : 1 }, stabilization: { enabled: false }, minVelocity: 0.75 },
+    physics: { enabled: false, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: mini ? -14 : -70, springLength: mini ? 36 : 95, springConstant: mini ? 0.08 : 0.06, centralGravity: mini ? 0.03 : 0.012, damping: 0.6, avoidOverlap: mini ? 0 : 1 }, stabilization: { enabled: false }, minVelocity: 0.75 },
     layout: { improvedLayout: !mini, randomSeed: 7 },
     edges: { smooth: { type: 'continuous', roundness: 0.3 } },
   });
   // Run the physics for a bounded number of iterations, then freeze and fit.
   // Networks are created with physics off and only ever settle through here,
   // so an empty network can never "finish" stabilising before it has nodes.
+  // Fit the graph, but on the detail view never zoom out so far that labels
+  // drop below ~8px; the rest is a drag away.
+  function fitReadable(net) {
+    net.fit({ animation: false });
+    if (net === state.net && net.getScale() < 0.7) net.moveTo({ scale: 0.7, position: net.getViewPosition() });
+  }
   function settle(net, ms, fit = true) {
     net.setOptions({ physics: { enabled: true } });
     clearTimeout(net.__settle);
-    net.__settle = setTimeout(() => { net.setOptions({ physics: { enabled: false } }); if (fit) net.fit({ animation: false }); }, ms);
+    net.__settle = setTimeout(() => { net.setOptions({ physics: { enabled: false } }); if (fit) fitReadable(net); }, ms);
   }
 
   // ---- the wall ---------------------------------------------------------
@@ -416,7 +427,7 @@
         const el = document.createElement('div'); el.className = 'tile card';
         el.tabIndex = 0; el.setAttribute('role', 'button');
         el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDevice(d.id); } };
-        el.innerHTML = `<div class="hd"><span class="dot"></span><span class="dev"></span><span class="badge outline"></span><div class="meta"><span class="owner"></span><span class="sim" hidden>sim</span><span class="agents"></span></div></div><div class="net"></div><div class="ft"></div>`;
+        el.innerHTML = `<div class="hd"><span class="dot"></span><span class="dev"></span><span class="badge outline"></span><div class="meta"><span class="owner"></span><span class="sim" hidden>sim</span><span class="agents"></span></div></div><div class="net"><div class="loading">Loading activity…</div></div><div class="ft"></div>`;
         el.onclick = () => openDevice(d.id);
         wall.appendChild(el);
         const nodes = new vis.DataSet([]), edges = new vis.DataSet([]);
@@ -468,7 +479,8 @@
     t.queued = false; t.at = Date.now();
     const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}?cap=200`), { signal: AbortSignal.timeout(12000) })).json();
     t.sig = sig;
-    const { vnodes, vedges } = toVis(gph.nodes, gph.edges, gph.alerts, true);
+    t.el.querySelector('.loading')?.remove();
+    const { vnodes, vedges } = toVis(gph.nodes, gph.edges, gph.alerts.filter((a) => a.severity !== 'info'), true);
     const have = new Set(t.nodes.getIds());
     t.nodes.update(vnodes); t.edges.update(vedges);
     for (const nid of have) if (!vnodes.find((n) => n.id === nid)) t.nodes.remove(nid);
@@ -477,7 +489,7 @@
 
   // ---- device detail ----------------------------------------------------
   function render(nodes, edges, alerts, title) {
-    const { vnodes, vedges } = toVis(nodes, edges, alerts, false);
+    const { vnodes, vedges } = toVis(nodes, edges, alerts.filter((a) => a.severity !== 'info'), false);
     $('#title').innerHTML = title;
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
@@ -513,13 +525,24 @@
       const keepN = new Set(gph.alerts.flatMap((a) => a.nodes)), keepE = new Set(gph.alerts.flatMap((a) => a.edges));
       gph = { ...gph, nodes: gph.nodes.filter((n) => keepN.has(n.id)), edges: gph.edges.filter((e) => keepE.has(e.id) && keepN.has(e.sourceId) && keepN.has(e.destinationId)) };
     }
-    if (!state.focus) render(gph.nodes, gph.edges, gph.alerts, `<b>${esc(id)}</b> · ${gph.nodes.length} nodes · ${gph.alerts.length} alerts`);
+    if (!state.focus) render(gph.nodes, gph.edges, gph.alerts, `<b>${esc(id)}</b> · ${gph.nodes.length} nodes · ${gph.alerts.filter((a) => a.severity !== 'info').length} alerts`);
     renderAlerts(gph.alerts); loadFeed(id); renderEndpoint(id, gph.alerts);
-    setTimeout(() => state.net && state.net.fit({ animation: false }), 50);
+    setTimeout(() => state.net && fitReadable(state.net), 50);
+  }
+  // Spotlight one alert: its path stays vivid, everything else fades, and the
+  // view zooms to the chain. Passing null restores the whole graph.
+  function spotlight(a) {
+    if (!state.net) return;
+    const keepN = new Set(a ? a.nodes : []), keepE = new Set(a ? a.edges : []);
+    state.nodes.update(state.nodes.get().map((n) => ({ id: n.id, opacity: !a || keepN.has(n.id) ? 1 : 0.12, font: { ...(n.font || {}), color: !a || keepN.has(n.id) ? css('--label') : 'rgba(0,0,0,0.12)' } })));
+    state.edges.update(state.edges.get().map((e) => ({ id: e.id, hidden: !!a && !keepE.has(e.id) })));
+    state.net.unselectAll();
+    if (a) state.net.fit({ nodes: a.nodes, animation: { duration: 400 } }); else fitReadable(state.net);
+    $('#spotClear').hidden = !a;
   }
   function renderEndpoint(id, alerts) {
     const d = state.devices?.get(id) || { id };
-    alerts = alerts || state.graph?.alerts || [];
+    alerts = (alerts || state.graph?.alerts || []).filter((a) => a.severity !== 'info');
     const crit = alerts.filter((a) => a.severity === 'critical').length, high = alerts.filter((a) => a.severity === 'high').length;
     const contained = alerts.filter((a) => a.blocked === true).length;
     const verdict = crit ? '<span class="badge solid verdict">critical risk</span>' : high ? '<span class="badge warning verdict">high risk</span>' : alerts.length ? '<span class="badge outline verdict">review</span>' : '<span class="badge success verdict">clean</span>';
@@ -528,6 +551,7 @@
       <dl><div><dt>sessions</dt><dd>${d.sessions ?? '—'}</dd></div><div><dt>actions</dt><dd>${d.actions ?? '—'}</dd></div><div><dt>contained</dt><dd>${contained}/${alerts.length}</dd></div><div><dt>last seen</dt><dd title="${fmt(d.last)}">${ago(d.last)}</dd></div></dl>`;
   }
   function closeDevice() {
+    if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
     state.device = null; state.focus = null; state.graph = null;
     $('#detail').hidden = true; $('#back').hidden = true;
     if (state.net) { state.net.destroy(); state.net = null; }
@@ -556,18 +580,18 @@
   }
   function renderAlerts(alerts) {
     const box = $('#alerts'); box.innerHTML = '';
-    $('#alertCount').textContent = alerts.length;
+    $('#alertCount').textContent = alerts.filter((a) => a.severity !== 'info').length;
     if (!alerts.length) { box.innerHTML = '<div class="panel" style="padding:12px;color:var(--muted-foreground)">No alerts on this device.</div>'; return; }
     const groups = new Map();
     for (const a of alerts) { const k = a.threat || '?'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
     for (const [k, items] of groups) {
-      const worst = items.some((a) => a.severity === 'critical') ? 'critical' : items.some((a) => a.severity === 'high') ? 'high' : 'medium';
+      const worst = items.some((a) => a.severity === 'critical') ? 'critical' : items.some((a) => a.severity === 'high') ? 'high' : items.some((a) => a.severity === 'medium') ? 'medium' : 'info';
       const open = openGroups.has(k);
       const div = document.createElement('div'); div.className = `panel group ${worst}`;
       div.innerHTML = `<div class="gh"><span class="badge destructive">${esc(k)}</span><span class="gt">${esc(THREATS[k] || k)}</span><span class="badge outline">${items.length}</span><span class="caret">${open ? '▾' : '▸'}</span></div>
         <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>Recommended response</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}</div></li>`; }).join('')}</ul>`;
       div.querySelector('.gh').onclick = () => { if (openGroups.has(k)) openGroups.delete(k); else openGroups.add(k); renderAlerts(alerts); };
-      div.querySelectorAll('.items > li').forEach((el) => { el.onclick = (ev) => { if (ev.target.closest('a')) return; ev.stopPropagation(); const a = items[Number(el.dataset.i)]; const key = `${k}:${el.dataset.i}:${a.summary}`; if (openAlerts.has(key)) openAlerts.delete(key); else openAlerts.add(key); el.classList.toggle('open'); if (state.net) { state.net.selectNodes(a.nodes); state.net.fit({ nodes: a.nodes, animation: true }); } }; });
+      div.querySelectorAll('.items > li').forEach((el) => { el.onclick = (ev) => { if (ev.target.closest('a')) return; ev.stopPropagation(); const a = items[Number(el.dataset.i)]; const key = `${k}:${el.dataset.i}:${a.summary}`; if (openAlerts.has(key)) openAlerts.delete(key); else openAlerts.add(key); el.classList.toggle('open'); spotlight(el.classList.contains('open') ? a : null); }; });
       box.appendChild(div);
     }
   }
@@ -661,6 +685,7 @@
   $('#back').onclick = closeDevice;
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && state.net.fit({ animation: true });
+  $('#spotClear').onclick = () => { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); };
   $('#pathsOnly').onclick = () => { state.pathsOnly = !state.pathsOnly; state.pathsAuto = false; if (state.device) { state.net?.destroy(); state.net = null; openDevice(state.device, true); } };
   // Header counters filter the wall: critical, high (includes critical), or everything.
   document.querySelectorAll('button.stat[data-sev]').forEach((b) => b.onclick = () => {

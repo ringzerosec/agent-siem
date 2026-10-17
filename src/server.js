@@ -233,19 +233,22 @@ app.get('/api/devices', async (req, res, next) => {
   try {
     const { from, to } = windowOf(req.query);
     const r = await gr().roQuery(
+      // p.last_ts (kept at ingest) skips idle processes without walking their
+      // edges: an endpoint with months of history costs nothing when quiet.
       `MATCH (d:Device)
        OPTIONAL MATCH (d)-[:RUNS]->(s:Session)
-       OPTIONAL MATCH (s)-[:HAS]->(p:Process)
+       WITH d, count(DISTINCT s) AS sessions, collect(DISTINCT s.agent) AS agents
+       OPTIONAL MATCH (d)-[:RUNS]->(:Session)-[:HAS]->(p:Process) WHERE coalesce(p.last_ts, p.first_ts) >= $from
        OPTIONAL MATCH (p)-[e]->() WHERE e.ts >= $from AND e.ts <= $to
-       WITH d, count(DISTINCT s) AS sessions, count(DISTINCT p) AS procs, count(e) AS actions, max(e.ts) AS last,
-            collect(DISTINCT s.agent) AS agents
+       WITH d, sessions, agents, count(DISTINCT p) AS procs, count(e) AS actions, max(e.ts) AS last
        RETURN d.id AS id, d.owner AS owner, d.simulated AS simulated, sessions, procs, actions, last, agents
        ORDER BY d.simulated, coalesce(last, 0) DESC, d.id`,
       { params: { from, to } },
     );
     const out = [];
     for (const row of r.data || []) {
-      const alerts = await detectDevice(row.id, { from, to });
+      const all = await detectDevice(row.id, { from, to });
+      const alerts = all.filter((a) => a.severity !== 'info');   // info findings never count on the wall
       const threats = {};
       for (const a of alerts) threats[a.threat] = (threats[a.threat] || 0) + 1;
       out.push({
@@ -254,6 +257,7 @@ app.get('/api/devices', async (req, res, next) => {
         critical: alerts.filter((a) => a.severity === 'critical').length,
         high: alerts.filter((a) => a.severity === 'high').length,
         contained: alerts.filter((a) => a.blocked === true).length,
+        info: all.length - alerts.length,
         threats,
         top: alerts[0]?.summary || null,
       });
@@ -271,7 +275,9 @@ app.get('/api/graph/device/:id', async (req, res, next) => {
     const { from, to } = windowOf(req.query);
     const cap = Math.min(Number(req.query.cap || 600), 3000);
     const r = await gr().roQuery(
-      `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)-[:HAS]->(p:Process)-[e]->(m)
+      `MATCH (d:Device {id: $id})
+       WITH d MATCH (d)-[:RUNS]->(s:Session)-[:HAS]->(p:Process) WHERE coalesce(p.last_ts, p.first_ts) >= $from
+       WITH s, p MATCH (p)-[e]->(m)
        WHERE NOT m:Session AND NOT m:Prompt AND coalesce(e.ts, p.first_ts) >= $from AND coalesce(e.ts, p.first_ts) <= $to
        OPTIONAL MATCH (m)-[e2:HAS_VULN]->(v:Vulnerability)
        RETURN s, p, e, m, e2, v
@@ -383,6 +389,16 @@ app.use((err, _req, res, _next) => {
 });
 
 await connect();
+// One-time backfill of p.last_ts / d.last_ts for graphs ingested before they existed.
+{
+  const r = await g().query(`MATCH (p:Process) WHERE p.last_ts IS NULL
+    OPTIONAL MATCH (p)-[e]->() WITH p, max(e.ts) AS m SET p.last_ts = coalesce(m, p.first_ts) RETURN count(p) AS n`);
+  const n = r.data?.[0]?.n || 0;
+  if (n) {
+    await g().query(`MATCH (d:Device)-[:RUNS]->(:Session)-[:HAS]->(p:Process) WITH d, max(p.last_ts) AS m SET d.last_ts = m`);
+    console.log(`backfilled last activity on ${n} processes`);
+  }
+}
 // Re-classify stored files when the sensitive-path rules change.
 {
   const { isSensitive } = await import('./ingest.js');

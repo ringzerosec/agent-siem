@@ -92,7 +92,7 @@ export const RULES = [
   {
     id: 'package-install',
     threat: 'T3',
-    severity: 'medium',
+    severity: 'info',   // a clean install is context, not an alert; vulnerable-package raises the alert
     title: 'Agent installed a package',
     cypher: `
       // Only real installs: the install line must have produced packages.
@@ -309,7 +309,7 @@ async function detectUncached(session) {
   // install line must not count once per event it touched.
   const seen = new Set();
   const unique = alerts.filter((a) => { const k = `${a.rule}|${a.summary}`; if (seen.has(k)) return false; seen.add(k); return true; });
-  const order = { critical: 0, high: 1, medium: 2 };
+  const order = { critical: 0, high: 1, medium: 2, info: 3 };
   unique.sort((a, b) => order[a.severity] - order[b.severity]);
   return unique;
 }
@@ -345,7 +345,7 @@ export async function detectDevice(deviceId, win) {
     if (a.blocked === false) prev.blocked = false;
   }
   out.push(...byKey.values());
-  const order = { critical: 0, high: 1, medium: 2 };
+  const order = { critical: 0, high: 1, medium: 2, info: 3 };
   out.sort((a, b) => order[a.severity] - order[b.severity]);
   return out;
 }

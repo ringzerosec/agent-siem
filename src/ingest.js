@@ -134,6 +134,8 @@ export async function ingestEvent(ev) {
      MERGE (s)-[:RAN_BY]->(a)
      MERGE (p:Process {key: $key})
        ON CREATE SET p.pid = $pid, p.name = $proc, p.first_ts = $ts, p.session = $session
+     SET p.last_ts = CASE WHEN coalesce(p.last_ts, 0) < $ts THEN $ts ELSE p.last_ts END,
+         d.last_ts = CASE WHEN coalesce(d.last_ts, 0) < $ts THEN $ts ELSE d.last_ts END
      MERGE (s)-[:HAS]->(p)`,
     { params: { session, device, owner, agent, key, pid, proc: procName, ts, simulated: ev.simulated === true, state: ev.session_state ?? null, priv: ev.session_privileged ?? null, preason: ev.session_reason ?? null } },
   );
