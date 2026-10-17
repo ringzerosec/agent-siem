@@ -21,6 +21,7 @@ import { authMiddleware, siemToken } from './auth.js';
 import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
 import { mountPepper, pepperHeadsUp } from './pepper.js';
+import { syncFindings, campaigns, indicatorIntel, backfillResolution } from './intel.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
@@ -98,6 +99,7 @@ setInterval(async () => {
 // Alerts that already existed at startup are not announced.
 const announced = new Set(); let announceReady = false;
 async function announceNew(device) {
+  try { await syncFindings(device, await detectDevice(device, { from: 0, to: Date.now() + 60_000 })); } catch (e) { console.error('intel sync', device, e.message); }
   const all = await detectDevice(device, { from: Date.now() - 6 * 3600 * 1000, to: Date.now() + 60_000 });
   for (const a of all) {
     if (!['critical', 'high'].includes(a.severity) || announced.has(a.id)) continue;
@@ -111,6 +113,7 @@ async function announceNew(device) {
 setTimeout(async () => {   // seed with what exists, then start announcing
   try { for (const row of (await gr().roQuery('MATCH (d:Device) RETURN d.id AS id')).data || []) await announceNew(row.id); } catch { /* best effort */ }
   announceReady = true;
+  backfillResolution().catch((e) => console.error('intel backfill', e.message));
 }, 15000);
 
 // --- ingest --------------------------------------------------------------
@@ -230,6 +233,11 @@ app.get('/api/surface/:device', async (req, res, next) => {
       skills: (sk.data || []).map((x) => ({ id: x.s.id, ...x.s.properties, findings: (() => { try { return JSON.parse(x.s.properties.findings || '[]'); } catch { return []; } })() })) });
   } catch (e) { next(e); }
 });
+
+// Threat-actor intelligence: campaigns (algo.WCC over findings and shared
+// infrastructure) and everything known about one indicator.
+app.get('/api/campaigns', async (_req, res, next) => { try { res.json(await campaigns()); } catch (e) { next(e); } });
+app.get('/api/intel/:value', async (req, res, next) => { try { res.json(await indicatorIntel(req.params.value)); } catch (e) { next(e); } });
 
 app.get('/api/bus', async (_req, res, next) => {
   try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }

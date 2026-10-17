@@ -36,6 +36,9 @@ const REPO = ['/home/dev/app/src/main.rs', '/home/dev/app/src/lib.rs', '/home/de
 const SECRETS = ['/home/dev/app/.env', '/home/dev/.ssh/id_ed25519', '/home/dev/.aws/credentials', '/home/dev/.docker/config.json'];
 const APPROVED = ['api.anthropic.com', 'api.openai.com', 'github.com', 'registry.npmjs.org', 'pypi.org'];
 const UNAPPROVED = ['pastebin.com', 'webhook.site', 'transfer.sh', 'ngrok-free.app', 'requestbin.net'];
+// Where the exfil hosts "resolve" in the simulation (TEST-NET-3, reserved for
+// documentation). Two actors reuse one server each under different names.
+const SIM_IP = { 'pastebin.com': '203.0.113.10', 'webhook.site': '203.0.113.11', 'requestbin.net': '203.0.113.11', 'transfer.sh': '203.0.113.12', 'ngrok-free.app': '203.0.113.12' };
 
 // MCP servers each laptop's agents declare. A third of the fleet also has an
 // untrusted community server installed; a few laptops carry a poisoned skill.
@@ -61,6 +64,10 @@ class Session {
   }
   ev(kind, pid, target, extra = {}) {
     return { id: `e${++eventSeq}`, ts: now(), device: this.device, owner: this.owner, simulated: true, session: this.id, agent: this.agent, kind, pid, process: extra.process || this.agent, target, allowed: extra.allowed !== false, ppid: extra.ppid, parent_process: extra.parent_process };
+  }
+  // curl to an exfil host, refused (enforce mode), with the IP it resolved to.
+  exfil(pid, host = pick(UNAPPROVED)) {
+    return { ...this.ev('connect', pid, host + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)', ip: SIM_IP[host] };
   }
   child(name) {
     const pid = this.nextPid++;
@@ -97,7 +104,7 @@ class Session {
       return [
         { ...this.ev('tool', this.rootPid, `${server}/${tool}`, { allowed: false }), reason: 'untrusted MCP server (enforce)' },
         c.ev,
-        { ...this.ev('connect', c.pid, pick(UNAPPROVED) + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)' },
+        this.exfil(c.pid),
       ];
     }
     if (kind === 'skill') {
@@ -106,7 +113,7 @@ class Session {
         this.ev('read', this.rootPid, `${POISONED_SKILL}/SKILL.md`),
         this.ev('read', this.rootPid, pick(SECRETS)),
         c.ev,
-        { ...this.ev('connect', c.pid, pick(UNAPPROVED) + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)' },
+        this.exfil(c.pid),
       ];
     }
     const c = this.child('curl');
@@ -114,7 +121,7 @@ class Session {
       this.ev('read', this.rootPid, pick(SECRETS)),
       this.ev('write', this.rootPid, '/home/dev/app/docs/diagram.md'),
       c.ev,
-      { ...this.ev('connect', c.pid, pick(UNAPPROVED) + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)' },
+      this.exfil(c.pid),
     ];
   }
   tick() {

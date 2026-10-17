@@ -96,6 +96,27 @@
   .alert .attack { font: 10.5px var(--mono); color: var(--muted-foreground); margin-top: 8px; }
   .alert .resp { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 12px; line-height: 1.45; }
   .alert .resp b { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--primary); margin-bottom: 2px; }
+  /* Campaigns */
+  #campaigns { padding: 16px 20px; overflow: auto; }
+  #campaigns .camp-top h2 { margin: 0 0 4px; font-size: 18px; }
+  #campaigns .camp-top p { margin: 0 0 14px; color: var(--muted-foreground); font-size: 13px; max-width: 900px; line-height: 1.5; }
+  #campaigns .camp-body { display: grid; grid-template-columns: minmax(340px, 460px) 1fr; gap: 14px; align-items: start; }
+  #campList { display: flex; flex-direction: column; gap: 10px; }
+  .camp { padding: 12px 14px; cursor: pointer; }
+  .camp:hover, .camp.on { border-color: var(--primary); }
+  .camp .ch { display: flex; gap: 8px; align-items: center; }
+  .camp .cn { font-weight: 600; font-size: 14px; flex: 1; }
+  .camp .cm { font-size: 12px; color: var(--muted-foreground); margin-top: 4px; }
+  .camp .ci { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .camp .ci span { font: 11px var(--mono); padding: 1px 6px; border-radius: 4px; background: var(--accent); }
+  .camp .ci span.ip { background: rgba(124,58,237,.10); color: #6d28d9; }
+  .camp .ci span.sk { background: rgba(220,38,38,.08); color: #b91c1c; }
+  .camp .eps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .camp .eps button { font: 11px var(--mono); border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+  .camp .eps button:hover { border-color: var(--primary); }
+  .camp-graph { position: sticky; top: 0; }
+  #campNet { height: min(640px, calc(100vh - 220px)); background: var(--canvas); }
+  @media (max-width: 900px) { #campaigns .camp-body { grid-template-columns: 1fr; } }
   /* MCP servers & skills */
   #surface { padding: 4px 0 6px; }
   #surface .sh { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); padding: 8px 14px 4px; }
@@ -280,7 +301,7 @@
 <body>
 <header>
   <div class="brand"><div class="mark">R0</div><div><h1>Agent SIEM</h1><div class="sub">Ring Zero Security</div></div></div>
-  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button></div>
+  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button><button data-v="campaigns">Campaigns</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
   <button class="btn sm" id="zeroBtn" title="Pepper, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Pepper</span></button>
@@ -298,6 +319,10 @@
 
 <div id="wall"><div id="wallEmpty">Waiting for devices…</div></div>
 
+<div id="campaigns" hidden>
+  <div class="camp-top"><div><h2>Campaigns</h2><p>Findings across endpoints that share infrastructure: the same exfil server under new names, the same skill on many laptops, the same MCP server. Grouped by FalkorDB connected components (<code>algo.WCC</code>) over findings, hosts, IPs, skills and MCP tools. A new domain on a known campaign's server is flagged on first contact.</p></div></div>
+  <div class="camp-body"><div id="campList"></div><div class="camp-graph card"><div class="card-header"><h2 class="sec" id="campTitle">Select a campaign</h2></div><div id="campNet"></div></div></div>
+</div>
 <div id="events" hidden>
   <div class="filters">
     <input id="fq" type="search" placeholder="Search target, process, command…" aria-label="Search">
@@ -666,7 +691,7 @@
 
   // Screen tools, executed for the engineer.
   async function applyUi(tool, a) {
-    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}` }[tool] || tool;
+    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns' }[tool] || tool;
     zLine('a', '↳ ' + label);
     try {
       switch (tool) {
@@ -692,6 +717,7 @@
           $('#foutcome').value = a.filter === 'alert' ? 'alert' : a.filter === 'refused' ? 'refused' : '';
           $('#fdevice').value = a.device || ''; $('#fq').value = a.query || ''; await loadEvents(); break;
         case 'set_time_range': { const r = { '24h': '24h', today: 'today', yesterday: 'yday', '7d': '7d', all: 'all' }[a.range]; document.querySelector(`#range [data-r="${r}"]`)?.click(); await new Promise((ok) => setTimeout(ok, 400)); break; }
+        case 'show_campaigns': setView('campaigns'); break;
         case 'run_triage': setView('wall'); if (state.device !== a.device) await openDevice(a.device); investigate(a.alert_id); break;
       }
     } catch (e) { console.warn('ui tool', tool, e); }
@@ -1033,9 +1059,60 @@
   function setView(v) {
     view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
     if (v === 'events' && state.device) closeDevice();
-    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events';
+    if (v === 'campaigns' && state.device) closeDevice();
+    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns';
     if (v === 'events') loadEvents();
+    if (v === 'campaigns') loadCampaigns();
   }
+  // ---- campaigns ------------------------------------------------------------
+  let campData = [], campNet = null;
+  async function loadCampaigns(selectId) {
+    campData = await (await fetch('/api/campaigns')).json();
+    const sevBadge = (s) => `<span class="badge ${s === 'critical' ? 'solid' : s === 'high' ? 'warning' : 'outline'}">${esc(s)}</span>`;
+    $('#campList').innerHTML = campData.length ? campData.map((c) => `<div class="camp card" data-id="${esc(c.id)}">
+      <div class="ch">${sevBadge(c.severity)}<span class="cn">${esc(c.name)}</span><span class="badge outline">${c.endpoints.length} endpoint${c.endpoints.length > 1 ? 's' : ''}</span></div>
+      <div class="cm">${c.findings} findings · ${c.blocked} blocked · ${esc(c.threats.join(' '))} · last ${ago(c.last)}</div>
+      <div class="ci">${c.indicators.hosts.map((h) => `<span>${esc(h)}</span>`).join('')}${c.indicators.ips.map((h) => `<span class="ip">${esc(h)}</span>`).join('')}${c.indicators.skills.map((h) => `<span class="sk">skill: ${esc(h)}</span>`).join('')}${c.indicators.mcp_tools.map((h) => `<span class="sk">mcp: ${esc(h)}</span>`).join('')}</div>
+      <div class="eps">${c.endpoints.map((d) => `<button data-dev="${esc(d)}">${esc(d)}</button>`).join('')}</div></div>`).join('')
+      : '<div class="dim" style="padding:12px">No campaigns yet: findings will group here when they share infrastructure.</div>';
+    $('#campList').querySelectorAll('.camp').forEach((el) => el.onclick = (e) => {
+      const dev = e.target.closest('[data-dev]')?.dataset.dev;
+      if (dev) { setView('wall'); openDevice(dev); return; }
+      showCampaign(el.dataset.id);
+    });
+    const pick = selectId || $('#campList .camp.on')?.dataset.id || campData[0]?.id;
+    if (pick) showCampaign(pick);
+  }
+  // A campaign as a graph: endpoints -> findings -> shared infrastructure.
+  function showCampaign(id) {
+    const c = campData.find((x) => x.id === id); if (!c) return;
+    $('#campList').querySelectorAll('.camp').forEach((el) => el.classList.toggle('on', el.dataset.id === id));
+    $('#campTitle').textContent = `${c.name} · ${c.endpoints.length} endpoints · ${c.findings} findings`;
+    const nodes = [], edges = [], seen = new Set();
+    const add = (n) => { if (!seen.has(n.id)) { seen.add(n.id); nodes.push(n); } };
+    const font = { face: 'Geist Mono', size: 12, color: css('--label'), background: css('--label-bg') };
+    for (const d of c.endpoints) add({ id: 'd:' + d, label: d, shape: 'box', color: { background: '#01696f', border: '#01696f' }, font: { ...font, color: '#fff', background: 'transparent' }, margin: 8 });
+    for (const f of c.devices_findings) {
+      add({ id: 'f:' + f.id, label: f.title.length > 38 ? f.title.slice(0, 36) + '…' : f.title, shape: 'dot', size: 9, color: f.severity === 'critical' ? '#dc2626' : '#d97706', font: { ...font, size: 10 } });
+      edges.push({ from: 'd:' + f.device, to: 'f:' + f.id, color: { color: '#cbd5e1' } });
+    }
+    for (const h of c.indicators.hosts) add({ id: 'h:' + h, label: h, shape: 'circularImage', image: ICON.badhost, size: 16, font });
+    for (const ip of c.indicators.ips) add({ id: 'i:' + ip, label: ip, shape: 'diamond', size: 10, color: '#7c3aed', font });
+    for (const sk of c.indicators.skills) add({ id: 's:' + sk, label: 'skill: ' + sk, shape: 'circularImage', image: ICON.badskill, size: 16, font });
+    for (const t of c.indicators.mcp_tools) add({ id: 't:' + t, label: t, shape: 'circularImage', image: ICON.badtool, size: 16, font });
+    // Findings to the indicators their summaries mention; hosts to their IPs.
+    for (const f of c.devices_findings) {
+      for (const h of c.indicators.hosts) edges.push({ from: 'f:' + f.id, to: 'h:' + h, color: { color: 'rgba(220,38,38,.35)' } });
+      for (const sk of c.indicators.skills) edges.push({ from: 'f:' + f.id, to: 's:' + sk, color: { color: 'rgba(220,38,38,.35)' } });
+      for (const t of c.indicators.mcp_tools) edges.push({ from: 'f:' + f.id, to: 't:' + t, color: { color: 'rgba(220,38,38,.35)' } });
+    }
+    for (const ip of c.indicators.ips) for (const h of c.indicators.hosts) edges.push({ from: 'h:' + h, to: 'i:' + ip, dashes: true, color: { color: '#a78bfa' } });
+    const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges.filter((e) => !e.hidden)) };
+    if (campNet) campNet.destroy();
+    campNet = new vis.Network($('#campNet'), data, { ...FORCE(false), interaction: { hover: true } });
+    settle(campNet, 1200);
+  }
+
   async function loadFacets() {
     const f = await (await fetch('/api/facets')).json();
     const fill = (sel, items) => { const cur = sel.value; sel.length = 1; for (const i of items.filter(Boolean).sort()) { const o = document.createElement('option'); o.value = i; o.textContent = i; sel.appendChild(o); } sel.value = cur; };

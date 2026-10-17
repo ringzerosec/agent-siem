@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { g, gr } from './db.js';
 import { detectDevice, blastRadius } from './detect.js';
 import * as bus from './bus.js';
+import { campaigns as listCampaignsIntel, indicatorIntel } from './intel.js';
 
 const text = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 1) }] });
 const fail = (msg) => ({ content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true });
@@ -143,6 +144,18 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
     const skills = (sk.data || []).map((r) => { const p = r.k.properties; let f = []; try { f = JSON.parse(p.findings || '[]'); } catch {} return { id: r.k.id, agent: p.agent, kind: p.kind, path: p.path, risk: p.risk, findings: f.slice(0, 4) }; });
     return text({ device, mcp_servers: [...servers.values()], skills });
   });
+
+  server.registerTool('list_campaigns', {
+    title: 'Campaigns (threat-actor view)',
+    description: 'Groups of findings across endpoints that share infrastructure (same server IP under different domain names, the same skill on many laptops, the same MCP server), computed with FalkorDB algo.WCC. Each has endpoints, findings, how many were blocked, threats and its indicators. Use for "is this one actor?", "what campaigns are active?".',
+    inputSchema: {},
+  }, async () => text({ algorithm: 'algo.WCC over Finding, Host, Ip, Skill, SkillSig, McpTool', campaigns: (await listCampaignsIntel()).map(({ finding_ids, devices_findings, component, ...c }) => c) }));
+
+  server.registerTool('indicator_intel', {
+    title: 'Who else is connected to this?',
+    description: 'Everything the graph knows about one indicator (a hostname, an IP, a skill name or an MCP server name): its campaign, the findings that involve it, the endpoints, and other hosts on the same infrastructure. Use for "have we seen this before?" and "who else is connected to this?".',
+    inputSchema: { value: z.string().describe('hostname, IP, skill name, or MCP server name') },
+  }, async ({ value }) => text(await indicatorIntel(value)));
 
   server.registerTool('process_timeline', {
     title: 'Process timeline',
@@ -287,7 +300,7 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 }
 
 export const TOOL_KIND = {
-  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
+  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
   block_host: 'action', contain_session: 'action', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };

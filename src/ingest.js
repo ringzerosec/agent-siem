@@ -23,6 +23,7 @@
 
 import { g } from './db.js';
 import { parseInstall, lookup } from './osv.js';
+import { linkIp, enrichHost, skillSignature } from './intel.js';
 
 const SENSITIVE = [
   /\/\.env($|\.)/, /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\/\.docker\/config\.json$/,
@@ -189,6 +190,7 @@ export async function ingestEvent(ev) {
          CREATE (p)-[:CONNECTED {ts: $ts, event: $id, allowed: $allowed, port: $port, reason: $reason}]->(h)`,
         { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host), resolvedAs: approvedAs(host), ts, id: ev.id || '', allowed, port: Number(port) || 443, reason: ev.reason || '' } },
       );
+      await intelOn(host, ev);
       break;
     }
     case 'tool': {
@@ -260,6 +262,15 @@ export async function ingestEvent(ev) {
   return session;
 }
 
+// Threat intel: the IP an event says a host had, and our own resolution for
+// unapproved domains, so new domains on known-bad infrastructure link up.
+async function intelOn(host, ev) {
+  try {
+    if (ev.ip) await linkIp(host, String(ev.ip));
+    if (!isApprovedHost(host) && isRoutable(host)) enrichHost(host);
+  } catch { /* enrichment is best effort */ }
+}
+
 export async function ingestMany(events) {
   const touched = new Set();
   for (const ev of events) touched.add(await ingestEvent(ev));
@@ -313,6 +324,7 @@ export async function ingestSkills(items) {
        MERGE (d)-[:HAS_SKILL]->(sk)`,
       { params: { device: String(k.device), path: String(k.path), agent: k.agent || '', kind: k.kind || '', owner: k.owner || '', files: Number(k.files_scanned) || 0, risk, count: findings.length, top: findings[0] ? `${findings[0].category || findings[0].severity}: ${findings[0].message}`.slice(0, 200) : '', findings: JSON.stringify(findings), ts: Number(k.ts) || Date.now(), sim: k.simulated === true } },
     );
+    await skillSignature(String(k.device), String(k.path), k.kind);
   }
 }
 

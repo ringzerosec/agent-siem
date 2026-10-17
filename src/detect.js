@@ -168,6 +168,27 @@ export const RULES = [
              p.name + ' used ' + t.server + '/' + t.name + ', then ' + c.name + ' connected to ' + h.name AS summary
       ORDER BY cn.ts DESC LIMIT 20`,
   },
+  // Threat intel (src/intel.js): a host never seen in an attack, on the same
+  // non-shared IP as a host from a known finding on another endpoint. Same
+  // actor, new domain: flagged on first contact.
+  {
+    id: 'linked-to-campaign-infra',
+    threat: 'T5',
+    severity: 'critical',
+    title: 'Connection to infrastructure shared with a known attack',
+    cypher: `
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(p:Process)-[cn:CONNECTED|SENT|RESOLVED]->(h:Host)
+      WHERE NOT coalesce(h.approved, false)
+      WITH s, p, cn, h MATCH (h)-[r1:RESOLVES_TO]->(ip:Ip)<-[r2:RESOLVES_TO]-(bad:Host)
+      WHERE bad <> h
+      WITH s, p, cn, h, r1, ip, r2, bad MATCH (f:Finding)-[:INVOLVES]->(bad)
+      WHERE f.severity IN ['critical', 'high'] AND f.device <> s.device AND f.rule <> 'linked-to-campaign-infra'
+      WITH p, cn, h, r1, ip, r2, bad, collect(f)[0] AS f
+      RETURN p, h, ip, bad, cn, [p, h, ip, bad] AS pn, [cn, r1, r2] AS pr,
+             p.name + ' contacted ' + h.name + ', which shares ' + ip.addr + ' with ' + bad.name + ' from an attack on ' + f.device + (CASE WHEN cn.allowed = false THEN ' (refused)' ELSE '' END) AS summary
+      ORDER BY cn.ts DESC LIMIT 10`,
+  },
   // Skills: an agent reading or running files inside a skill the skill scanner
   // flagged. The static finding is now live behaviour.
   {
@@ -416,6 +437,20 @@ export async function detectDevice(deviceId, win) {
         summary: `${p.agent} ${p.kind} ${p.path}: ${p.top_finding || 'finding'}${p.finding_count > 1 ? ` (+${p.finding_count - 1} more)` : ''}`,
         evidence: (() => { try { return JSON.parse(p.findings || '[]').slice(0, 8); } catch { return []; } })(),
         nodes: [row.sk.id], edges: [], ts: p.scanned_at ? [p.scanned_at] : [], session: null, sessions: 0, blocked: null }));
+    }
+  }
+  // Threat intel: a skill on this endpoint that matches one flagged elsewhere.
+  {
+    const xr = await graph.roQuery(
+      `MATCH (d:Device {id: $id})-[:HAS_SKILL]->(k:Skill)-[:SIGNATURE]->(sg:SkillSig)<-[:SIGNATURE]-(o:Skill)
+       WHERE o.device <> $id AND o.risk IN ['high', 'critical']
+       RETURN k, sg.sig AS sig, collect(DISTINCT o.device) AS elsewhere`, { params: { id: deviceId } });
+    for (const row of xr.data || []) {
+      const p = row.k.properties; const k = `skill-in-campaign|${p.path}`;
+      if (byKey.has(k)) continue;
+      byKey.set(k, enrich({ rule: 'skill-in-campaign', threat: 'T1', severity: 'high', title: 'Skill flagged on other endpoints is installed here',
+        summary: `${p.agent} ${p.kind} "${row.sig}" is installed here and was flagged on ${row.elsewhere.length} other endpoint${row.elsewhere.length > 1 ? 's' : ''} (${row.elsewhere.slice(0, 3).join(', ')})`,
+        nodes: [row.k.id], edges: [], ts: p.scanned_at ? [p.scanned_at] : [], session: null, sessions: 0, blocked: null }));
     }
   }
   // Stable id per finding on this device, so an agent or a person can refer to it.
