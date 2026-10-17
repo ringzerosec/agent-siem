@@ -1,7 +1,9 @@
 // server.js — HTTP API + live updates for the dashboard.
 //
 //   POST /api/events            ingest a JSON array of events (or one event)
-//   GET  /api/sessions          every session with its alert counts (live list)
+//   GET  /api/devices           every device with its alert counts (the wall)
+//   GET  /api/graph/device/:id  one device's whole graph (all its sessions) + alerts
+//   GET  /api/sessions          every session with its alert counts
 //   GET  /api/graph/:session    nodes + edges of one session, plus its alerts
 //   GET  /api/node/:id          one node's details, timeline and 2-hop blast radius
 //   GET  /api/alerts            all alerts across sessions, newest first
@@ -13,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, g, wipe } from './db.js';
 import { ingestMany } from './ingest.js';
-import { detect, blastRadius, collect } from './detect.js';
+import { detect, detectDevice, blastRadius } from './detect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
@@ -45,7 +47,8 @@ app.post('/api/events', async (req, res, next) => {
     const sessions = await ingestMany(events);
     for (const session of sessions) {
       const alerts = await detect(session);
-      broadcast({ type: 'update', session, alerts: alerts.length, critical: alerts.filter((a) => a.severity === 'critical').length });
+      const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session } });
+      broadcast({ type: 'update', device: dr.data?.[0]?.id, session, alerts: alerts.length, critical: alerts.filter((a) => a.severity === 'critical').length });
     }
     res.json({ ingested: events.length, sessions });
   } catch (e) { next(e); }
@@ -56,6 +59,54 @@ app.post('/api/reset', async (_req, res, next) => {
 });
 
 // --- reads ---------------------------------------------------------------
+app.get('/api/devices', async (_req, res, next) => {
+  try {
+    const r = await g().roQuery(
+      `MATCH (d:Device)
+       OPTIONAL MATCH (d)-[:RUNS]->(s:Session)
+       OPTIONAL MATCH (s)-[:HAS]->(p:Process)
+       OPTIONAL MATCH (p)-[e]->()
+       WITH d, count(DISTINCT s) AS sessions, count(DISTINCT p) AS procs, count(e) AS actions, max(e.ts) AS last,
+            collect(DISTINCT s.agent) AS agents
+       RETURN d.id AS id, d.owner AS owner, sessions, procs, actions, last, agents
+       ORDER BY d.id`,
+    );
+    const out = [];
+    for (const row of r.data || []) {
+      const alerts = await detectDevice(row.id);
+      out.push({
+        ...row,
+        alerts: alerts.length,
+        critical: alerts.filter((a) => a.severity === 'critical').length,
+        high: alerts.filter((a) => a.severity === 'high').length,
+        top: alerts[0]?.summary || null,
+      });
+    }
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+app.get('/api/graph/device/:id', async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const r = await g().roQuery(
+      `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)-[:HAS]->(p:Process)
+       OPTIONAL MATCH (p)-[e]->(m) WHERE NOT m:Session
+       RETURN s, p, e, m`,
+      { params: { id } },
+    );
+    const nodes = new Map();
+    const edges = new Map();
+    for (const row of r.data || []) {
+      nodes.set(row.p.id, row.p);
+      if (row.m) nodes.set(row.m.id, row.m);
+      if (row.e) edges.set(row.e.id, row.e);
+    }
+    const alerts = await detectDevice(id);
+    res.json({ device: id, nodes: [...nodes.values()], edges: [...edges.values()], alerts });
+  } catch (e) { next(e); }
+});
+
 app.get('/api/sessions', async (_req, res, next) => {
   try {
     const r = await g().roQuery(

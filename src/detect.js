@@ -128,6 +128,17 @@ export async function blastRadius(nodeId, hops = 2) {
   return collect(res.data || []);
 }
 
+// All alerts on one device = union over its sessions.
+export async function detectDevice(deviceId) {
+  const graph = g();
+  const r = await graph.roQuery('MATCH (d:Device {id: $id})-[:RUNS]->(s:Session) RETURN s.id AS id', { params: { id: deviceId } });
+  const out = [];
+  for (const row of r.data || []) for (const a of await detect(row.id)) out.push({ session: row.id, ...a });
+  const order = { critical: 0, high: 1, medium: 2 };
+  out.sort((a, b) => order[a.severity] - order[b.severity]);
+  return out;
+}
+
 export function collect(rows) {
   const nodes = new Map();
   const edges = new Map();

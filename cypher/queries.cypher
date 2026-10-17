@@ -2,7 +2,9 @@
 // Run against FalkorDB (GRAPH.QUERY agentwatch "...").
 
 // ---------- Model ----------
-// (:Session {id, agent, started})
+// (:Device {id, owner, first_ts})
+// (:Session {id, agent, started, device})
+// (Device)-[:RUNS]->(Session)
 // (:Agent {name})
 // (:Process {key, pid, name, first_ts, session})
 // (:File {path, sensitive, instruction, program?, privileged?, installer?})
@@ -14,6 +16,18 @@
 // (Process)-[:READ|WROTE|EXECUTED {ts, event, allowed}]->(File)
 // (Process)-[:CONNECTED {ts, event, allowed, port}]->(Host)
 // (Process)-[:USED_TOOL {ts, event, allowed}]->(McpTool)
+
+// ---------- The wall: every device with its sessions, processes and actions ----------
+MATCH (d:Device)
+OPTIONAL MATCH (d)-[:RUNS]->(s:Session)
+OPTIONAL MATCH (s)-[:HAS]->(p:Process)
+OPTIONAL MATCH (p)-[e]->()
+RETURN d.id, d.owner, count(DISTINCT s), count(DISTINCT p), count(e), max(e.ts), collect(DISTINCT s.agent);
+
+// ---------- One device's whole graph ----------
+MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)-[:HAS]->(p:Process)
+OPTIONAL MATCH (p)-[e]->(m) WHERE NOT m:Session
+RETURN s, p, e, m;
 
 // ---------- Live session list with alert counts ----------
 MATCH (s:Session)

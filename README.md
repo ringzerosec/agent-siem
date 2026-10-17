@@ -1,11 +1,13 @@
 # Agent Watch
 
-A live security console for AI coding agents. Every action an agent takes on a
-developer machine (process spawned, file read or written, program executed,
-network connection, MCP tool call) becomes an edge in a **provenance graph in
-FalkorDB**. Alert rules are Cypher path queries. When a path matches, the
-session turns red in the sidebar, the path is painted red on the graph, and the
-analyst clicks any node to see its timeline and blast radius.
+A live security wall for AI coding agents across a fleet. Every employee device
+is a tile showing its own live provenance graph. Every action an agent takes on
+that device (process spawned, file read or written, program executed, network
+connection, MCP tool call) becomes an edge in a **provenance graph in
+FalkorDB**. Alert rules are Cypher path queries. When a path matches, the tile
+turns red; click it to open the device's full graph with the alert path painted
+red, then click any node for its timeline and blast radius. Nodes are icons:
+agent, process, file, secret, host, unapproved host, MCP tool.
 
 Built for the WeMakeDevs × FalkorDB "Graph Hacks: Context for AI Agents"
 hackathon, Track 01 (Agents That Act on Connected Data: security triage).
@@ -31,7 +33,9 @@ is no product. All queries are in [`cypher/queries.cypher`](cypher/queries.cyphe
 ## Graph data model
 
 ```
-(:Session {id, agent, started})
+(:Device  {id, owner, first_ts})          one employee machine (or one benchmark VM)
+(:Session {id, agent, started, device})
+(Device)-[:RUNS]->(Session)
 (:Agent   {name})
 (:Process {key, pid, name, first_ts, session})
 (:File    {path, sensitive, instruction, program?, privileged?, installer?})
@@ -70,9 +74,10 @@ docker compose up --build
 # dashboard: http://localhost:8080   FalkorDB browser: http://localhost:3000
 ```
 
-The `simulator` service plays four concurrent agent sessions doing ordinary
-development work; about a third of them drift into the read-secret → write →
-connect-out chain. Watch them turn red.
+The `simulator` service plays a fleet of 12 employee devices, each running one
+or two agent sessions doing ordinary development work; about a quarter of the
+sessions drift into the read-secret → write → connect-out chain. Watch their
+tiles turn red. `SIM_DEVICES=40 SIM_RATE_MS=150` for a bigger wall.
 
 Without compose:
 
@@ -88,12 +93,13 @@ npm run sim          # in another terminal
 `POST /api/events` takes a JSON array:
 
 ```json
-{"id":"e1","ts":1760000000000,"session":"sess-01","agent":"claude-code",
+{"id":"e1","ts":1760000000000,"device":"priya-laptop","owner":"priya","session":"priya-laptop-s1","agent":"claude-code",
  "kind":"read","pid":4242,"ppid":4000,"process":"python3","parent_process":"claude-code",
  "target":"/home/dev/app/.env","allowed":true}
 ```
 
-`kind` is one of `read`, `write`, `exec`, `connect` (`target` = `host:port`),
+`device` and `owner` identify the machine (a tile on the wall); `session` the
+agent run on it. `kind` is one of `read`, `write`, `exec`, `connect` (`target` = `host:port`),
 `tool` (`target` = `server/tool`), `spawn`. The shape mirrors the public event
 record of the Ring Zero Security Linux daemon, so an export of its
 `/api/v1/events` drops in unchanged. Set `APPROVED_HOSTS` (comma-separated) to
@@ -104,12 +110,22 @@ your allowlist.
 | Route | What |
 |---|---|
 | `POST /api/events` | ingest; triggers detection and a live update |
-| `GET /api/sessions` | every session with alert counts (the sidebar) |
+| `GET /api/devices` | every device with alert counts (the wall) |
+| `GET /api/graph/device/:id` | nodes, edges and alerts for one device |
+| `GET /api/sessions` | every session with alert counts |
 | `GET /api/graph/:session` | nodes, edges and alerts for one session |
 | `GET /api/node/:id?hops=2` | node properties, timeline, blast radius |
 | `GET /api/alerts` | all alerts across sessions |
 | `GET /api/stream` | server-sent events, one message per ingest |
 | `POST /api/reset` | wipe the graph |
+
+## Also a benchmark monitor
+
+The same wall works for containment benchmarks: run N attacker agents in N
+disposable VMs, point each VM's event export at `POST /api/events` with the VM
+id as `device`, and the wall shows which VMs an attack path reached and which
+were contained. Every red path is reproducible from the graph: the nodes and
+edges on it are the evidence.
 
 ## Stack
 

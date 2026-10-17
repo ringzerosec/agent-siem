@@ -2,11 +2,13 @@
 //
 // Event shape (JSONL, one per line). It mirrors the public SecurityEvent of
 // the Ring Zero Security daemon so a real export drops in unchanged:
-//   { id, ts, session, agent, kind, pid, ppid, process, target, allowed, extra }
+//   { id, ts, device, owner, session, agent, kind, pid, ppid, process, target, allowed, extra }
 // kind ∈ exec | read | write | connect | tool | spawn
 //
 // Graph model:
-//   (:Session {id, agent, started})
+//   (:Device {id, owner, first_ts})      one employee machine
+//   (:Session {id, agent, started, device})
+//   (Device)-[:RUNS]->(Session)
 //   (:Agent {name})
 //   (:Process {key: session+pid, pid, name, first_ts})
 //   (:File {path, sensitive})          sensitive = looks like a credential
@@ -49,6 +51,8 @@ function base(cmd) {
 export async function ingestEvent(ev) {
   const graph = g();
   const session = String(ev.session);
+  const device = String(ev.device || 'unknown-device');
+  const owner = ev.owner || '';
   const agent = ev.agent || 'unknown-agent';
   const pid = Number(ev.pid);
   const key = `${session}:${pid}`;
@@ -57,14 +61,17 @@ export async function ingestEvent(ev) {
   const procName = ev.process || 'unknown';
 
   await graph.query(
-    `MERGE (s:Session {id: $session})
-       ON CREATE SET s.agent = $agent, s.started = $ts
+    `MERGE (d:Device {id: $device})
+       ON CREATE SET d.owner = $owner, d.first_ts = $ts
+     MERGE (s:Session {id: $session})
+       ON CREATE SET s.agent = $agent, s.started = $ts, s.device = $device
+     MERGE (d)-[:RUNS]->(s)
      MERGE (a:Agent {name: $agent})
      MERGE (s)-[:RAN_BY]->(a)
      MERGE (p:Process {key: $key})
        ON CREATE SET p.pid = $pid, p.name = $proc, p.first_ts = $ts, p.session = $session
      MERGE (s)-[:HAS]->(p)`,
-    { params: { session, agent, key, pid, proc: procName, ts } },
+    { params: { session, device, owner, agent, key, pid, proc: procName, ts } },
   );
 
   if (ev.ppid) {

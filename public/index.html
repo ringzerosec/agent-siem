@@ -6,113 +6,130 @@
 <title>Agent Watch</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-  /* Dark security console: calm slate surfaces, one red for alerts, one amber for high. */
+  /* Security wall: one dark surface, every employee device a live graph tile.
+     Red is reserved for alert paths; amber for refused actions. */
   :root {
-    --bg: #0f1216; --panel: #161b22; --panel-2: #1c2330; --line: #2a3340;
+    --bg: #0b0e12; --tile: #12161c; --tile-2: #1a2029; --line: #232b36;
     --fg: #e6ebf2; --muted: #8b97a8; --accent: #5aa9ff;
-    --crit: #ff4d4f; --high: #f5a623; --med: #c9d1d9; --ok: #3ddc84;
+    --crit: #ff4d4f; --high: #f5a623; --ok: #3ddc84;
     --font: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font); display: grid; grid-template-rows: 48px 1fr; }
-  header { display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .02em; }
-  header .live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
-  header .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
-  header .live.off i { background: var(--crit); }
-  header .spacer { flex: 1; }
-  header button { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
-  main { display: grid; grid-template-columns: 300px 1fr 360px; min-height: 0; }
-  main > section { min-width: 0; min-height: 0; overflow: auto; }
-  aside, .right { background: var(--panel); border-right: 1px solid var(--line); }
-  .right { border-right: 0; border-left: 1px solid var(--line); }
-  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 14px 8px; font-weight: 600; }
-  .sessions { list-style: none; margin: 0; padding: 0 8px; }
-  .sessions li { padding: 10px; border-radius: 8px; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; border: 1px solid transparent; }
-  .sessions li:hover { background: var(--panel-2); }
-  .sessions li.active { border-color: var(--accent); background: var(--panel-2); }
-  .sessions li.crit { border-left: 3px solid var(--crit); }
-  .sessions li.high { border-left: 3px solid var(--high); }
-  .sessions .id { font-family: var(--mono); font-size: 13px; }
-  .sessions .agent, .sessions .meta { color: var(--muted); font-size: 12px; grid-column: 1 / -1; }
-  .badge { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--muted); align-self: start; }
-  .badge.crit { background: var(--crit); color: #fff; } .badge.high { background: var(--high); color: #1a1200; }
-  .sessions .top { grid-column: 1 / -1; font-size: 12px; color: var(--crit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font); display: grid; grid-template-rows: 44px 1fr; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--tile); }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: .04em; text-transform: uppercase; }
+  .live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
+  .live.off i { background: var(--crit); }
+  .spacer { flex: 1; }
+  .stat { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .stat b { color: var(--fg); font-weight: 500; }
+  .stat.crit b { color: var(--crit); }
+  header button { background: var(--tile-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+
+  /* The wall */
+  #wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); grid-auto-rows: minmax(220px, 1fr); gap: 10px; padding: 10px; overflow: auto; }
+  .tile { position: relative; background: var(--tile); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+  .tile:hover { border-color: var(--accent); }
+  .tile.high { border-color: var(--high); }
+  .tile.crit { border-color: var(--crit); box-shadow: 0 0 0 1px var(--crit), 0 0 24px rgba(255,77,79,.25); animation: pulse 1.6s ease-in-out 3; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 1px var(--crit), 0 0 24px rgba(255,77,79,.25);} 50% { box-shadow: 0 0 0 2px var(--crit), 0 0 40px rgba(255,77,79,.5);} }
+  .tile .net { position: absolute; inset: 0; }
+  .tile .hd { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 8px 10px; z-index: 2; pointer-events: none; background: linear-gradient(var(--tile), transparent); }
+  .tile .owner { font-weight: 600; font-size: 13px; }
+  .tile .dev { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .tile .badge { margin-left: auto; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--tile-2); color: var(--muted); }
+  .tile.crit .badge { background: var(--crit); color: #fff; }
+  .tile.high .badge { background: var(--high); color: #1a1200; }
+  .tile .ft { position: absolute; bottom: 0; left: 0; right: 0; padding: 6px 10px; font-size: 11px; color: var(--muted); z-index: 2; pointer-events: none; background: linear-gradient(transparent, var(--tile)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile.crit .ft { color: var(--crit); }
+  .tile .agents { position: absolute; top: 30px; left: 10px; font-size: 10px; color: var(--muted); font-family: var(--mono); z-index: 2; pointer-events: none; }
+  #wallEmpty { grid-column: 1 / -1; display: grid; place-items: center; color: var(--muted); }
+
+  /* Device detail overlay */
+  #detail { position: fixed; inset: 44px 0 0 0; background: var(--bg); display: grid; grid-template-columns: 1fr 380px; z-index: 10; }
+  #detail[hidden] { display: none; }
   #canvas { position: relative; }
   #graph { position: absolute; inset: 0; }
-  .toolbar { position: absolute; top: 10px; left: 12px; display: flex; gap: 8px; z-index: 2; align-items: center; }
-  .toolbar .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--muted); }
-  .toolbar .chip b { color: var(--fg); font-family: var(--mono); font-weight: 500; }
-  .toolbar button { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .toolbar { position: absolute; top: 10px; left: 12px; display: flex; gap: 8px; z-index: 2; align-items: center; flex-wrap: wrap; }
+  .chip { background: var(--tile); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--muted); }
+  .chip b { color: var(--fg); font-family: var(--mono); font-weight: 500; }
+  .toolbar button { background: var(--tile); color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
   .legend { position: absolute; bottom: 10px; left: 12px; display: flex; gap: 12px; font-size: 11px; color: var(--muted); z-index: 2; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
-  .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+  .side { background: var(--tile); border-left: 1px solid var(--line); overflow: auto; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 14px 8px; font-weight: 600; }
   .alerts { list-style: none; margin: 0; padding: 0 8px; }
-  .alerts li { padding: 10px; border-radius: 8px; margin-bottom: 6px; background: var(--panel-2); cursor: pointer; border-left: 3px solid var(--med); }
+  .alerts li { padding: 10px; border-radius: 8px; margin-bottom: 6px; background: var(--tile-2); cursor: pointer; border-left: 3px solid var(--muted); }
   .alerts li.critical { border-left-color: var(--crit); } .alerts li.high { border-left-color: var(--high); }
   .alerts .t { font-weight: 600; font-size: 13px; } .alerts .s { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-top: 3px; word-break: break-all; }
-  .detail { padding: 0 14px 14px; }
-  .detail .kind { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-  .detail .name { font-family: var(--mono); font-size: 13px; word-break: break-all; margin: 4px 0 10px; }
-  .detail dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0 0 12px; }
-  .detail dt { color: var(--muted); } .detail dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+  .alerts .sess { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+  .node { padding: 0 14px 14px; }
+  .node .kind { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .node .name { font-family: var(--mono); font-size: 13px; word-break: break-all; margin: 4px 0 10px; }
+  .node dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; margin: 0 0 12px; }
+  .node dt { color: var(--muted); } .node dd { margin: 0; font-family: var(--mono); word-break: break-all; }
   .tl { list-style: none; margin: 0; padding: 0; font-size: 12px; }
-  .tl li { display: grid; grid-template-columns: 64px 70px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); font-family: var(--mono); }
+  .tl li { display: grid; grid-template-columns: 64px 76px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); font-family: var(--mono); }
   .tl li.refused { color: var(--crit); }
   .tl .ts { color: var(--muted); }
-  .detail .actions { display: flex; gap: 8px; margin: 8px 0 12px; }
-  .detail .actions button { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+  .node .actions { display: flex; gap: 8px; margin: 8px 0 12px; flex-wrap: wrap; }
+  .node .actions button { background: var(--tile-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer; }
   .hint { color: var(--muted); font-size: 12px; padding: 0 14px; }
-  @media (max-width: 1000px) { main { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto; } aside, .right { border: 0; border-bottom: 1px solid var(--line); } }
+  @media (max-width: 900px) { #detail { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; } .side { border-left: 0; border-top: 1px solid var(--line); } }
 </style>
 </head>
 <body>
 <header>
   <h1>Agent Watch</h1>
   <span class="live" id="live"><i></i> live</span>
+  <button id="back" hidden>← all devices</button>
   <span class="spacer"></span>
-  <span class="chip" id="totals" style="color:var(--muted);font-size:12px"></span>
+  <span class="stat" id="statDevices"><b>0</b> devices</span>
+  <span class="stat crit" id="statCrit"><b>0</b> critical</span>
+  <span class="stat" id="statHigh"><b>0</b> high</span>
   <button id="reset" title="Wipe the graph (demo)">Reset</button>
 </header>
-<main>
-  <aside>
-    <h2>Sessions</h2>
-    <ul class="sessions" id="sessions"></ul>
-  </aside>
+
+<div id="wall"><div id="wallEmpty">Waiting for devices…</div></div>
+
+<div id="detail" hidden>
   <section id="canvas">
     <div class="toolbar">
-      <span class="chip" id="title">Pick a session</span>
-      <button id="back" hidden>← whole session</button>
+      <span class="chip" id="title"></span>
+      <button id="whole" hidden>← whole device</button>
       <button id="fit">Fit</button>
     </div>
     <div id="graph"></div>
-    <div class="empty" id="empty">Select a session on the left. Red nodes are on an alert path.</div>
     <div class="legend">
-      <span><i style="background:#5aa9ff"></i>process</span>
-      <span><i style="background:#9aa5b1"></i>file</span>
-      <span><i style="background:#b388ff"></i>host</span>
-      <span><i style="background:#3ddc84"></i>mcp tool</span>
-      <span><i style="background:var(--crit)"></i>on alert path</span>
+      <span><i style="background:#5aa9ff;border-radius:50%"></i>agent</span>
+      <span><i style="background:#3b7fd1;border-radius:50%"></i>process</span>
+      <span><i style="background:#9aa5b1;border-radius:50%"></i>file</span>
+      <span><i style="background:#f5a623;border-radius:50%"></i>secret / privilege</span>
+      <span><i style="background:#b388ff;border-radius:50%"></i>host</span>
+      <span><i style="background:#ff4d4f;border-radius:50%"></i>unapproved host</span>
+      <span><i style="background:#3ddc84;border-radius:50%"></i>mcp tool</span>
+      <span><i style="border:3px solid var(--crit);border-radius:50%;background:transparent"></i>on alert path</span>
+      <span><i style="background:transparent;border:1px dashed var(--high)"></i>refused</span>
     </div>
   </section>
-  <section class="right">
-    <h2>Alerts</h2>
+  <section class="side">
+    <h2>Alerts on this device</h2>
     <ul class="alerts" id="alerts"></ul>
     <h2>Selected node</h2>
-    <div class="hint" id="nodehint">Click a node to see its timeline and blast radius.</div>
-    <div class="detail" id="detail" hidden></div>
+    <div class="hint" id="nodehint">Click a node for its timeline and blast radius. Double-click to focus.</div>
+    <div class="node" id="nodeDetail" hidden></div>
   </section>
-</main>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
-  const state = { session: null, graph: null, focus: null, net: null, nodes: null, edges: null };
-  const COLORS = { Process: '#5aa9ff', File: '#9aa5b1', Host: '#b388ff', McpTool: '#3ddc84', Session: '#555', Agent: '#555' };
   const fmt = (ts) => ts ? new Date(ts).toLocaleTimeString() : '';
+  const state = { device: null, graph: null, focus: null, net: null, nodes: null, edges: null, tiles: new Map(), tileAlerts: new Map() };
 
   function label(n) {
     const p = n.properties;
@@ -122,53 +139,104 @@
     if (n.labels.includes('McpTool')) return `${p.server}/${p.name}`;
     return p.id || p.name || String(n.id);
   }
-  function shape(n) {
-    if (n.labels.includes('Process')) return 'dot';
-    if (n.labels.includes('Host')) return 'diamond';
-    if (n.labels.includes('McpTool')) return 'hexagon';
-    return 'box';
+
+  // ---- icons: inline SVG → data URI, one per node kind -------------------
+  const svg = (body, bg) => 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="31" fill="${bg}"/>${body}</svg>`);
+  const ICON = {
+    agent:   svg('<rect x="18" y="20" width="28" height="22" rx="5" fill="#0b0e12"/><circle cx="26" cy="31" r="3.5" fill="#5aa9ff"/><circle cx="38" cy="31" r="3.5" fill="#5aa9ff"/><rect x="24" y="37" width="16" height="2.5" rx="1" fill="#5aa9ff"/><rect x="30" y="12" width="4" height="8" rx="2" fill="#0b0e12"/><circle cx="32" cy="11" r="3" fill="#0b0e12"/>', '#5aa9ff'),
+    process: svg('<rect x="14" y="18" width="36" height="28" rx="4" fill="#0b0e12"/><path d="M20 26l6 5-6 5" stroke="#9fd0ff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="29" y="35" width="12" height="3" rx="1.5" fill="#9fd0ff"/>', '#3b7fd1'),
+    file:    svg('<path d="M22 14h14l10 10v26a2 2 0 0 1-2 2H22a2 2 0 0 1-2-2V16a2 2 0 0 1 2-2z" fill="#0b0e12"/><path d="M36 14v10h10" fill="#9aa5b1"/><rect x="25" y="32" width="14" height="2.5" rx="1" fill="#9aa5b1"/><rect x="25" y="38" width="14" height="2.5" rx="1" fill="#9aa5b1"/>', '#9aa5b1'),
+    secret:  svg('<circle cx="26" cy="30" r="9" fill="none" stroke="#0b0e12" stroke-width="5"/><path d="M33 33l14 14M41 41l4-4M46 46l4-4" stroke="#0b0e12" stroke-width="5" stroke-linecap="round"/>', '#f5a623'),
+    exec:    svg('<rect x="14" y="16" width="36" height="32" rx="4" fill="#0b0e12"/><path d="M21 25l7 7-7 7" stroke="#b7e3c6" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="31" y="37" width="12" height="3" rx="1.5" fill="#b7e3c6"/>', '#6f8f7a'),
+    priv:    svg('<rect x="20" y="28" width="24" height="20" rx="3" fill="#0b0e12"/><path d="M24 28v-6a8 8 0 0 1 16 0v6" stroke="#0b0e12" stroke-width="5" fill="none"/><circle cx="32" cy="38" r="3" fill="#ffd6a0"/>', '#f5a623'),
+    host:    svg('<circle cx="32" cy="32" r="16" fill="none" stroke="#0b0e12" stroke-width="4"/><ellipse cx="32" cy="32" rx="7" ry="16" fill="none" stroke="#0b0e12" stroke-width="3"/><path d="M16 32h32M19 24h26M19 40h26" stroke="#0b0e12" stroke-width="3"/>', '#b388ff'),
+    badhost: svg('<circle cx="32" cy="32" r="16" fill="none" stroke="#0b0e12" stroke-width="4"/><ellipse cx="32" cy="32" rx="7" ry="16" fill="none" stroke="#0b0e12" stroke-width="3"/><path d="M16 32h32" stroke="#0b0e12" stroke-width="3"/><path d="M44 18l8-8M44 10l8 8" stroke="#fff" stroke-width="4" stroke-linecap="round"/>', '#ff4d4f'),
+    tool:    svg('<rect x="22" y="14" width="6" height="12" rx="2" fill="#0b0e12"/><rect x="36" y="14" width="6" height="12" rx="2" fill="#0b0e12"/><path d="M18 26h28v8a14 14 0 0 1-28 0z" fill="#0b0e12"/><rect x="30" y="46" width="4" height="8" rx="2" fill="#0b0e12"/>', '#3ddc84'),
+  };
+  function icon(n) {
+    const p = n.properties;
+    if (n.labels.includes('Process')) return /claude|cursor|codex|gemini|agent|copilot|aider/i.test(p.name) ? ICON.agent : ICON.process;
+    if (n.labels.includes('File')) return p.sensitive ? ICON.secret : p.privileged ? ICON.priv : p.program ? ICON.exec : ICON.file;
+    if (n.labels.includes('Host')) return p.approved ? ICON.host : ICON.badhost;
+    if (n.labels.includes('McpTool')) return ICON.tool;
+    return ICON.file;
   }
 
-  // ---- sessions list -----------------------------------------------------
-  async function loadSessions() {
-    const r = await fetch('/api/sessions'); const list = await r.json();
-    const ul = $('#sessions'); ul.innerHTML = '';
-    let crit = 0, high = 0;
-    for (const s of list) {
-      crit += s.critical; high += s.high;
-      const li = document.createElement('li');
-      li.className = (s.critical ? 'crit' : s.high ? 'high' : '') + (s.id === state.session ? ' active' : '');
-      li.innerHTML = `<span class="id">${s.id}</span>
-        <span class="badge ${s.critical ? 'crit' : s.high ? 'high' : ''}">${s.alerts ? s.alerts + ' alert' + (s.alerts > 1 ? 's' : '') : 'clean'}</span>
-        <span class="agent">${s.agent}</span>
-        <span class="meta">${s.procs} processes · ${s.actions} actions · last ${fmt(s.last)}</span>
-        ${s.top ? `<span class="top">${s.top}</span>` : ''}`;
-      li.onclick = () => selectSession(s.id);
-      ul.appendChild(li);
-    }
-    $('#totals').textContent = `${list.length} sessions · ${crit} critical · ${high} high`;
-  }
 
-  // ---- graph -------------------------------------------------------------
-  function render(nodes, edges, alerts, title) {
-    const onPath = new Set(); const onEdge = new Set();
+  function toVis(nodes, edges, alerts, mini) {
+    const onPath = new Set(), onEdge = new Set();
     for (const a of alerts) { a.nodes.forEach((id) => onPath.add(id)); a.edges.forEach((id) => onEdge.add(id)); }
     const vnodes = nodes.map((n) => ({
-      id: n.id, label: label(n), shape: shape(n), size: n.labels.includes('Process') ? 16 : 12,
+      id: n.id, label: mini ? undefined : label(n), shape: 'circularImage', image: icon(n),
+      size: mini ? (n.labels.includes('Process') ? 9 : 7) : (n.labels.includes('Process') ? 20 : 15),
       color: onPath.has(n.id)
-        ? { background: '#ff4d4f', border: '#ff9a9b', highlight: { background: '#ff6b6d', border: '#fff' } }
-        : { background: COLORS[n.labels[0]] || '#888', border: '#1c2330', highlight: { background: '#fff', border: '#5aa9ff' } },
-      font: { color: '#e6ebf2', face: 'IBM Plex Mono', size: 11, multi: false },
-      borderWidth: onPath.has(n.id) ? 3 : 1, _raw: n,
+        ? { border: '#ff4d4f', background: '#ff4d4f', highlight: { border: '#fff', background: '#ff4d4f' } }
+        : { border: '#1a2029', background: '#1a2029', highlight: { border: '#5aa9ff', background: '#5aa9ff' } },
+      font: { color: '#e6ebf2', face: 'IBM Plex Mono', size: 11, background: 'rgba(11,14,18,.7)' },
+      borderWidth: onPath.has(n.id) ? (mini ? 3 : 4) : 1,
+      shadow: onPath.has(n.id) ? { enabled: true, color: 'rgba(255,77,79,.6)', size: mini ? 10 : 18, x: 0, y: 0 } : false,
     }));
     const vedges = edges.map((e) => ({
-      id: e.id, from: e.sourceId, to: e.destinationId, label: e.relationshipType.toLowerCase(),
-      arrows: 'to', font: { color: '#8b97a8', size: 9, align: 'middle', strokeWidth: 0 },
+      id: e.id, from: e.sourceId, to: e.destinationId, label: mini ? undefined : e.relationshipType.toLowerCase(),
+      arrows: mini ? undefined : 'to', font: { color: '#8b97a8', size: 9, align: 'middle', strokeWidth: 0 },
       color: onEdge.has(e.id) ? { color: '#ff4d4f', highlight: '#ff9a9b' } : { color: e.properties?.allowed === false ? '#f5a623' : '#2a3340', highlight: '#5aa9ff' },
-      width: onEdge.has(e.id) ? 3 : 1, dashes: e.properties?.allowed === false,
+      width: onEdge.has(e.id) ? (mini ? 2 : 3) : 1, dashes: e.properties?.allowed === false,
     }));
+    return { vnodes, vedges };
+  }
+
+  // ---- the wall ---------------------------------------------------------
+  async function loadWall() {
+    const devices = await (await fetch('/api/devices')).json();
+    const wall = $('#wall');
+    if (devices.length) $('#wallEmpty')?.remove();
+    let crit = 0, high = 0;
+    for (const d of devices) {
+      crit += d.critical; high += d.high;
+      let t = state.tiles.get(d.id);
+      if (!t) {
+        const el = document.createElement('div'); el.className = 'tile';
+        el.innerHTML = `<div class="hd"><span class="owner"></span><span class="dev"></span><span class="badge"></span></div><div class="agents"></div><div class="net"></div><div class="ft"></div>`;
+        el.onclick = () => openDevice(d.id);
+        wall.appendChild(el);
+        const nodes = new vis.DataSet([]), edges = new vis.DataSet([]);
+        const net = new vis.Network(el.querySelector('.net'), { nodes, edges }, {
+          physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -18, springLength: 40, centralGravity: 0.02 }, stabilization: { iterations: 60 } },
+          interaction: { dragNodes: false, dragView: false, zoomView: false, selectable: false, hover: false },
+          layout: { improvedLayout: false },
+        });
+        t = { el, net, nodes, edges, had: 0 };
+        state.tiles.set(d.id, t);
+      }
+      t.el.querySelector('.owner').textContent = d.owner || d.id;
+      t.el.querySelector('.dev').textContent = d.id;
+      t.el.querySelector('.agents').textContent = (d.agents || []).filter(Boolean).join(' · ');
+      t.el.querySelector('.badge').textContent = d.alerts ? `${d.alerts} alert${d.alerts > 1 ? 's' : ''}` : 'clean';
+      t.el.querySelector('.ft').textContent = d.top || `${d.procs} processes · ${d.actions} actions · ${fmt(d.last)}`;
+      const cls = d.critical ? 'crit' : d.high ? 'high' : '';
+      if (cls === 'crit' && !t.el.classList.contains('crit')) { t.el.style.animation = 'none'; void t.el.offsetWidth; t.el.style.animation = ''; }
+      t.el.className = 'tile ' + cls;
+      refreshTile(d.id, t);
+    }
+    $('#statDevices').innerHTML = `<b>${devices.length}</b> devices`;
+    $('#statCrit').innerHTML = `<b>${crit}</b> critical`;
+    $('#statHigh').innerHTML = `<b>${high}</b> high`;
+  }
+
+  async function refreshTile(id, t) {
+    const gph = await (await fetch(`/api/graph/device/${encodeURIComponent(id)}`)).json();
+    const { vnodes, vedges } = toVis(gph.nodes, gph.edges, gph.alerts, true);
+    const have = new Set(t.nodes.getIds());
+    t.nodes.update(vnodes); t.edges.update(vedges);
+    for (const nid of have) if (!vnodes.find((n) => n.id === nid)) t.nodes.remove(nid);
+    if (vnodes.length !== t.had) { t.had = vnodes.length; t.net.fit({ animation: false }); }
+  }
+
+  // ---- device detail ----------------------------------------------------
+  function render(nodes, edges, alerts, title) {
+    const { vnodes, vedges } = toVis(nodes, edges, alerts, false);
     $('#title').innerHTML = title;
-    $('#empty').hidden = true;
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, {
@@ -178,7 +246,6 @@
       state.net.on('click', (p) => { if (p.nodes.length) selectNode(p.nodes[0]); });
       state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
     } else {
-      // Update in place so the layout doesn't jump on every live tick.
       const have = new Set(state.nodes.getIds());
       state.nodes.update(vnodes); state.edges.update(vedges);
       for (const id of have) if (!vnodes.find((n) => n.id === id)) state.nodes.remove(id);
@@ -186,51 +253,57 @@
     }
   }
 
-  async function selectSession(id) {
-    state.session = id; state.focus = null; $('#back').hidden = true;
-    await loadSessions();
-    const r = await fetch(`/api/graph/${encodeURIComponent(id)}`); const gph = await r.json();
+  async function openDevice(id, keepFocus) {
+    state.device = id; if (!keepFocus) state.focus = null;
+    $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true;
+    const gph = await (await fetch(`/api/graph/device/${encodeURIComponent(id)}`)).json();
     state.graph = gph;
-    render(gph.nodes, gph.edges, gph.alerts, `session <b>${id}</b> · ${gph.nodes.length} nodes · ${gph.alerts.length} alerts`);
+    if (!state.focus) render(gph.nodes, gph.edges, gph.alerts, `<b>${id}</b> · ${gph.nodes.length} nodes · ${gph.alerts.length} alerts`);
     renderAlerts(gph.alerts);
+    setTimeout(() => state.net && state.net.fit({ animation: false }), 50);
   }
-
+  function closeDevice() {
+    state.device = null; state.focus = null; state.graph = null;
+    $('#detail').hidden = true; $('#back').hidden = true;
+    if (state.net) { state.net.destroy(); state.net = null; }
+    $('#nodeDetail').hidden = true; $('#nodehint').hidden = false;
+  }
   function renderAlerts(alerts) {
     const ul = $('#alerts'); ul.innerHTML = '';
-    if (!alerts.length) { ul.innerHTML = '<li style="border-left-color:var(--ok);color:var(--muted)">No alerts in this session.</li>'; return; }
+    if (!alerts.length) { ul.innerHTML = '<li style="border-left-color:var(--ok);color:var(--muted)">No alerts on this device.</li>'; return; }
     for (const a of alerts) {
       const li = document.createElement('li'); li.className = a.severity;
-      li.innerHTML = `<div class="t">${a.title}</div><div class="s">${a.summary}</div>`;
+      li.innerHTML = `<div class="sess">${a.session}</div><div class="t">${a.title}</div><div class="s">${a.summary}</div>`;
       li.onclick = () => { if (state.net) { state.net.selectNodes(a.nodes); state.net.fit({ nodes: a.nodes, animation: true }); } };
       ul.appendChild(li);
     }
   }
 
-  // ---- node focus --------------------------------------------------------
   async function selectNode(id) {
-    const r = await fetch(`/api/node/${id}`); const d = await r.json();
+    const d = await (await fetch(`/api/node/${id}`)).json();
     const n = d.node; const p = n.properties;
-    $('#nodehint').hidden = true; const el = $('#detail'); el.hidden = false;
+    $('#nodehint').hidden = true; const el = $('#nodeDetail'); el.hidden = false;
     const props = Object.entries(p).filter(([k]) => !['key', 'session'].includes(k)).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
-    const tl = d.timeline.map((t) => `<li class="${t.allowed === false ? 'refused' : ''}"><span class="ts">${fmt(t.ts)}</span><span>${t.outgoing ? '' : '← '}${t.action.toLowerCase()}${t.allowed === false ? ' ✗' : ''}</span><span>${label(t.m)}${t.argv ? ' · ' + t.argv : ''}${t.port ? ':' + t.port : ''}</span></li>`).join('');
+    const tl = d.timeline.filter((t) => t.ts).map((t) => `<li class="${t.allowed === false ? 'refused' : ''}"><span class="ts">${fmt(t.ts)}</span><span>${t.outgoing ? '' : '← '}${t.action.toLowerCase()}${t.allowed === false ? ' ✗' : ''}</span><span>${label(t.m).replace('\n', ' ')}${t.argv ? ' · ' + t.argv : ''}${t.port ? ':' + t.port : ''}</span></li>`).join('');
     el.innerHTML = `<div class="kind">${n.labels.join(', ')}</div><div class="name">${label(n).replace('\n', ' · ')}</div>
       <dl>${props}</dl>
-      <div class="actions"><button id="focusBtn">Show this node's graph</button><button id="radiusBtn">Blast radius (2 hops)</button></div>
-      <h2 style="margin-left:0">Timeline</h2><ul class="tl">${tl || '<li>no actions</li>'}</ul>`;
+      <div class="actions"><button id="focusBtn">This node's graph</button><button id="radiusBtn">Blast radius (2 hops)</button></div>
+      <h2 style="margin-left:0">Timeline</h2><ul class="tl">${tl || '<li>no timed actions</li>'}</ul>`;
     $('#focusBtn').onclick = () => focusNode(id);
-    $('#radiusBtn').onclick = () => { render(d.radius.nodes.concat([n]), d.radius.edges, state.graph?.alerts || [], `blast radius of <b>${label(n).replace('\n', ' ')}</b> · ${d.radius.nodes.length} reachable`); state.focus = id; $('#back').hidden = false; };
+    $('#radiusBtn').onclick = () => { state.focus = id; $('#whole').hidden = false; render(d.radius.nodes.concat([n]), d.radius.edges, state.graph?.alerts || [], `blast radius of <b>${label(n).replace('\n', ' ')}</b> · ${d.radius.nodes.length} reachable`); };
   }
   async function focusNode(id) {
-    const r = await fetch(`/api/node/${id}?hops=1`); const d = await r.json();
-    render(d.radius.nodes.concat([d.node]), d.radius.edges, state.graph?.alerts || [], `node <b>${label(d.node).replace('\n', ' ')}</b> and its neighbours`);
-    state.focus = id; $('#back').hidden = false;
+    const d = await (await fetch(`/api/node/${id}?hops=1`)).json();
+    state.focus = id; $('#whole').hidden = false;
+    render(d.radius.nodes.concat([d.node]), d.radius.edges, state.graph?.alerts || [], `<b>${label(d.node).replace('\n', ' ')}</b> and its neighbours`);
   }
 
-  $('#back').onclick = () => selectSession(state.session);
+  $('#back').onclick = closeDevice;
+  $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && state.net.fit({ animation: true });
-  $('#reset').onclick = async () => { await fetch('/api/reset', { method: 'POST' }); state.session = null; state.graph = null; if (state.net) { state.nodes.clear(); state.edges.clear(); } $('#empty').hidden = false; $('#alerts').innerHTML = ''; loadSessions(); };
+  $('#reset').onclick = async () => { await fetch('/api/reset', { method: 'POST' }); closeDevice(); for (const t of state.tiles.values()) t.el.remove(); state.tiles.clear(); $('#wall').innerHTML = '<div id="wallEmpty">Waiting for devices…</div>'; };
 
-  // ---- live --------------------------------------------------------------
+  // ---- live ---------------------------------------------------------------
   function connectStream() {
     const es = new EventSource('/api/stream');
     es.onopen = () => $('#live').classList.remove('off');
@@ -238,15 +311,15 @@
     let pending = null;
     es.onmessage = (m) => {
       const msg = JSON.parse(m.data);
-      if (msg.type === 'reset') { loadSessions(); return; }
+      if (msg.type === 'reset') { loadWall(); return; }
       clearTimeout(pending);
       pending = setTimeout(async () => {
-        await loadSessions();
-        if (msg.session === state.session && !state.focus) await selectSession(state.session);
-      }, 250);
+        await loadWall();
+        if (msg.device === state.device) await openDevice(state.device, true);
+      }, 200);
     };
   }
-  loadSessions(); connectStream();
+  loadWall(); connectStream(); setInterval(loadWall, 5000);
 })();
 </script>
 </body>
