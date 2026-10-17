@@ -74,6 +74,10 @@
   .live.off i { background: var(--destructive); }
   .spacer { flex: 1; }
   /* 21st Statistics Card, compressed into a header strip */
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card); }
+  .seg button { border: 0; background: transparent; color: var(--muted-foreground); font: 500 12px var(--sans); padding: 0 10px; height: 32px; cursor: pointer; border-left: 1px solid var(--border); }
+  .seg button:first-child { border-left: 0; }
+  .seg button.on { background: var(--teal-light); color: var(--teal); }
   .stats { display: flex; gap: 8px; }
   .stat { display: flex; align-items: baseline; gap: 6px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
   .stat b { font-size: 18px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -173,6 +177,9 @@
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
   <span class="spacer"></span>
+  <div class="seg" id="range" role="tablist" aria-label="Time range">
+    <button data-r="24h" class="on">24 h</button><button data-r="today">Today</button><button data-r="yday">Yesterday</button><button data-r="7d">7 days</button><button data-r="all">All</button>
+  </div>
   <div class="stats">
     <div class="stat" id="statDevices"><b>0</b><span>devices</span></div>
     <div class="stat crit" id="statCrit"><b>0</b><span>critical</span></div>
@@ -230,7 +237,19 @@
   const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let THREATS = {};
   fetch('/api/threats').then((r) => r.json()).then((t) => { THREATS = t; });
-  const state = { device: null, graph: null, focus: null, net: null, nodes: null, edges: null, tiles: new Map() };
+  const state = { device: null, graph: null, focus: null, net: null, nodes: null, edges: null, tiles: new Map(), range: '24h' };
+  function rangeQS() {
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const day = 86400000, now = Date.now();
+    switch (state.range) {
+      case 'today': return `from=${d0.getTime()}&to=${now + 60000}`;
+      case 'yday': return `from=${d0.getTime() - day}&to=${d0.getTime() - 1}`;
+      case '7d': return `from=${now - 7 * day}&to=${now + 60000}`;
+      case 'all': return `from=0&to=${now + 60000}`;
+      default: return `from=${now - day}&to=${now + 60000}`;
+    }
+  }
+  const q = (path) => path + (path.includes('?') ? '&' : '?') + rangeQS();
 
   // ---- icons: inline SVG → data URI, one per node kind -------------------
   const svg = (body, bg) => 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="31" fill="${bg}"/>${body}</svg>`);
@@ -323,7 +342,7 @@
   // Only redraw tiles whose device changed; a full redraw of every tile on
   // every event is what makes browsers flag the tab.
   async function loadWall(onlyDevices) {
-    const devices = await (await fetch('/api/devices')).json();
+    const devices = await (await fetch(q('/api/devices'))).json();
     const wall = $('#wall');
     if (devices.length) $('#wallEmpty')?.remove();
     let crit = 0, high = 0;
@@ -354,7 +373,7 @@
       if (cls === 'crit' && !t.el.classList.contains('crit')) { t.el.style.animation = 'none'; void t.el.offsetWidth; t.el.style.animation = ''; }
       t.el.classList.remove('crit', 'high'); if (cls) t.el.classList.add(cls);
       t.el.classList.toggle('idle', !d.actions);
-      if (!d.actions) t.el.querySelector('.ft').innerHTML = `<span class="dim">idle · no activity in the last 24 h${d.alerts ? ' · ' + d.alerts + ' past alert' + (d.alerts > 1 ? 's' : '') : ''}</span>`;
+      if (!d.actions) t.el.querySelector('.ft').innerHTML = `<span class="dim">idle · no activity in this range${d.alerts ? ' · ' + d.alerts + ' past alert' + (d.alerts > 1 ? 's' : '') : ''}</span>`;
       wall.appendChild(t.el);   // re-append in server order: active first, idle last
       if (!onlyDevices || onlyDevices.has(d.id) || t.had === 0) refreshTile(d.id, t, d);
     }
@@ -365,7 +384,7 @@
   async function refreshTile(id, t, d) {
     const sig = d ? `${d.actions}:${d.procs}:${d.alerts}` : null;
     if (sig && sig === t.sig) return;      // nothing changed on this device
-    const gph = await (await fetch(`/api/graph/device/${encodeURIComponent(id)}`)).json();
+    const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
     t.sig = sig;
     const { vnodes, vedges } = toVis(gph.nodes, gph.edges, gph.alerts, true);
     const have = new Set(t.nodes.getIds());
@@ -396,7 +415,7 @@
   async function openDevice(id, keepFocus) {
     state.device = id; if (!keepFocus) state.focus = null;
     $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true;
-    const gph = await (await fetch(`/api/graph/device/${encodeURIComponent(id)}`)).json();
+    const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
     state.graph = gph;
     if (!state.focus) render(gph.nodes, gph.edges, gph.alerts, `<b>${esc(id)}</b> · ${gph.nodes.length} nodes · ${gph.alerts.length} alerts`);
     renderAlerts(gph.alerts); loadFeed(id);
@@ -449,7 +468,7 @@
 
   // ---- live session feed --------------------------------------------------
   async function loadFeed(device) {
-    const d = await (await fetch(`/api/feed/${encodeURIComponent(device)}`)).json();
+    const d = await (await fetch(q(`/api/feed/${encodeURIComponent(device)}`))).json();
     const el = $('#feed'); const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
     el.innerHTML = d.items.length ? d.items.map((i) => i.kind === 'prompt'
       ? `<li class="prompt ${i.flagged ? 'flagged' : ''}"><span class="ts">${fmt(i.ts)}</span><span class="who">${esc(i.via || '')}${i.model ? ' · ' + esc(i.model) : ''}</span><div class="txt">${esc(i.text || i.tool || '')}</div></li>`
@@ -483,6 +502,14 @@
     render(d.radius.nodes.concat([d.node]), d.radius.edges, state.graph?.alerts || [], `<b>${esc(label(d.node).replace('\n', ' '))}</b> and its neighbours`);
   }
 
+  $('#range').onclick = (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    state.range = b.dataset.r;
+    for (const x of $('#range').children) x.classList.toggle('on', x === b);
+    for (const t of state.tiles.values()) t.sig = null;
+    loadWall();
+    if (state.device) openDevice(state.device);
+  };
   $('#back').onclick = closeDevice;
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && state.net.fit({ animation: true });

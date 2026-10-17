@@ -24,6 +24,15 @@ const app = express();
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// --- time window ---------------------------------------------------------
+// ?from=<ms>&to=<ms> on reads; default is the last GRAPH_WINDOW_HOURS (24).
+function windowOf(q) {
+  const hours = Number(process.env.GRAPH_WINDOW_HOURS || 24);
+  const to = q.to ? Number(q.to) : Date.now() + 60_000;
+  const from = q.from ? Number(q.from) : (q.to ? 0 : Date.now() - hours * 3600 * 1000);
+  return { from, to };
+}
+
 // --- live stream ---------------------------------------------------------
 const clients = new Set();
 function broadcast(msg) {
@@ -85,10 +94,11 @@ app.get('/api/feed/:device', async (req, res, next) => {
        RETURN s.id AS session, s.agent AS agent, prompts, notes`,
       { params: { id } },
     );
+    const { from, to } = windowOf(req.query);
     const items = [];
     for (const row of r.data || []) {
-      for (const p of row.prompts) if (p.ts) items.push({ session: row.session, ...p });
-      for (const n of row.notes) if (n.ts) items.push({ session: row.session, ...n });
+      for (const p of row.prompts) if (p.ts && p.ts >= from && p.ts <= to) items.push({ session: row.session, ...p });
+      for (const n of row.notes) if (n.ts && n.ts >= from && n.ts <= to) items.push({ session: row.session, ...n });
     }
     items.sort((a, b) => a.ts - b.ts);
     res.json({ device: id, items: items.slice(-300) });
@@ -122,22 +132,23 @@ app.post('/api/reset', async (_req, res, next) => {
 });
 
 // --- reads ---------------------------------------------------------------
-app.get('/api/devices', async (_req, res, next) => {
+app.get('/api/devices', async (req, res, next) => {
   try {
+    const { from, to } = windowOf(req.query);
     const r = await g().roQuery(
       `MATCH (d:Device)
        OPTIONAL MATCH (d)-[:RUNS]->(s:Session)
        OPTIONAL MATCH (s)-[:HAS]->(p:Process)
-       OPTIONAL MATCH (p)-[e]->() WHERE e.ts >= $since
+       OPTIONAL MATCH (p)-[e]->() WHERE e.ts >= $from AND e.ts <= $to
        WITH d, count(DISTINCT s) AS sessions, count(DISTINCT p) AS procs, count(e) AS actions, max(e.ts) AS last,
             collect(DISTINCT s.agent) AS agents
        RETURN d.id AS id, d.owner AS owner, d.simulated AS simulated, sessions, procs, actions, last, agents
        ORDER BY d.simulated, coalesce(last, 0) DESC, d.id`,
-      { params: { since: Date.now() - Number(process.env.GRAPH_WINDOW_HOURS || 24) * 3600 * 1000 } },
+      { params: { from, to } },
     );
     const out = [];
     for (const row of r.data || []) {
-      const alerts = await detectDevice(row.id);
+      const alerts = await detectDevice(row.id, { from, to });
       const threats = {};
       for (const a of alerts) threats[a.threat] = (threats[a.threat] || 0) + 1;
       out.push({
@@ -159,16 +170,15 @@ app.get('/api/devices', async (_req, res, next) => {
 app.get('/api/graph/device/:id', async (req, res, next) => {
   try {
     const id = req.params.id;
-    const hours = Number(req.query.hours || process.env.GRAPH_WINDOW_HOURS || 24);
+    const { from, to } = windowOf(req.query);
     const cap = Math.min(Number(req.query.cap || 600), 3000);
-    const since = Date.now() - hours * 3600 * 1000;
     const r = await g().roQuery(
       `MATCH (d:Device {id: $id})-[:RUNS]->(s:Session)-[:HAS]->(p:Process)-[e]->(m)
-       WHERE NOT m:Session AND NOT m:Prompt AND coalesce(e.ts, p.first_ts) >= $since
+       WHERE NOT m:Session AND NOT m:Prompt AND coalesce(e.ts, p.first_ts) >= $from AND coalesce(e.ts, p.first_ts) <= $to
        OPTIONAL MATCH (m)-[e2:HAS_VULN]->(v:Vulnerability)
        RETURN s, p, e, m, e2, v
        ORDER BY e.ts DESC LIMIT $cap`,
-      { params: { id, since, cap } },
+      { params: { id, from, to, cap } },
     );
     const nodes = new Map();
     const edges = new Map();
@@ -179,8 +189,8 @@ app.get('/api/graph/device/:id', async (req, res, next) => {
       if (row.v) nodes.set(row.v.id, row.v);
       if (row.e2) edges.set(row.e2.id, row.e2);
     }
-    const alerts = await detectDevice(id);
-    res.json({ device: id, nodes: [...nodes.values()], edges: [...edges.values()], alerts });
+    const alerts = await detectDevice(id, { from, to });
+    res.json({ device: id, nodes: [...nodes.values()], edges: [...edges.values()], alerts, window: { from, to } });
   } catch (e) { next(e); }
 });
 

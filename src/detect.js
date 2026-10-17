@@ -204,7 +204,9 @@ function nodeId(n) { return n.id; }
 
 // Run every rule for one session. Returns alerts with the node and edge ids
 // on the path so the UI can paint them.
-export async function detect(session) {
+// `win` = {from, to} in ms: keep an alert only if some edge on its path
+// happened inside the window.
+export async function detect(session, win) {
   const graph = g();
   const alerts = [];
   for (const rule of RULES) {
@@ -217,6 +219,10 @@ export async function detect(session) {
         if (k === 'pn' || k === 'pr' || k === 'summary' || k === 'evidence' || k === 'subject' || v == null || typeof v !== 'object') continue;
         if ('labels' in v) pn.push(v.id);
         else if ('relationshipType' in v) pr.push(v.id);
+      }
+      if (win) {
+        const ts = [...(row.pr || []), ...Object.values(row).filter((v) => v && typeof v === 'object' && 'relationshipType' in v)].map((e) => e.properties?.ts).filter(Boolean);
+        if (ts.length && !ts.some((t) => t >= win.from && t <= win.to)) continue;
       }
       alerts.push({
         rule: rule.id, threat: rule.threat, threatName: THREATS[rule.threat], severity: rule.severity, title: rule.title, summary: row.summary,
@@ -250,11 +256,11 @@ export async function blastRadius(nodeId, hops = 2) {
 }
 
 // All alerts on one device = union over its sessions.
-export async function detectDevice(deviceId) {
+export async function detectDevice(deviceId, win) {
   const graph = g();
   const r = await graph.roQuery('MATCH (d:Device {id: $id})-[:RUNS]->(s:Session) RETURN s.id AS id', { params: { id: deviceId } });
   const out = [];
-  for (const row of r.data || []) for (const a of await detect(row.id)) out.push({ session: row.id, ...a });
+  for (const row of r.data || []) for (const a of await detect(row.id, win)) out.push({ session: row.id, ...a });
   const order = { critical: 0, high: 1, medium: 2 };
   out.sort((a, b) => order[a.severity] - order[b.severity]);
   return out;
