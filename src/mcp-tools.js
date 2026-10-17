@@ -44,28 +44,46 @@ async function findAlert(device, alertId) {
   return { alerts, alert: alerts.find((a) => a.id === alertId) };
 }
 
+// Never block this machine or the local network: loopback, private and
+// link-local addresses and .local names. (The daemon's rule compiler refuses
+// these too; refusing here keeps them out of the inbox and the action log.)
+export function localTarget(host) {
+  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/:\d+$/, '');
+  return h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h === '0.0.0.0' || h === '::1' || h === '::'
+    || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^169\.254\./.test(h)
+    || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h);
+}
+
 async function recordAction({ device, alertId, type, target, reason, by }) {
   const ts = Date.now();
+  // A simulated endpoint has no daemon: record the action as simulated instead
+  // of leaving it queued forever.
+  const sim = device !== '*' && !!(await gr().roQuery('MATCH (d:Device {id: $device}) RETURN d.simulated AS s', { params: { device } })).data?.[0]?.s;
+  const status = sim ? 'simulated' : 'queued';
   // Fleet-wide actions (device "*") hang off a single (:Fleet) node, not a fake device.
   const r = await g().query(device === '*'
     ? `MERGE (d:Fleet {id: 'fleet'})
-       CREATE (a:Action {type: $type, target: $target, reason: $reason, by: $by, alert: $alertId, device: $device, ts: $ts, status: 'queued'})
+       CREATE (a:Action {type: $type, target: $target, reason: $reason, by: $by, alert: $alertId, device: $device, ts: $ts, status: $status})
        CREATE (d)-[:ACTION]->(a)
        RETURN ID(a) AS id`
     : `MERGE (d:Device {id: $device})
-     CREATE (a:Action {type: $type, target: $target, reason: $reason, by: $by, alert: $alertId, device: $device, ts: $ts, status: 'queued'})
+     CREATE (a:Action {type: $type, target: $target, reason: $reason, by: $by, alert: $alertId, device: $device, ts: $ts, status: $status})
      CREATE (d)-[:ACTION]->(a)
      RETURN ID(a) AS id`,
-    { params: { device, type, target, reason, by, alertId: alertId || '', ts } },
+    { params: { device, type, target, reason, by, alertId: alertId || '', ts, status } },
   );
   const id = r.data?.[0]?.id;
+  if (sim) return { action_id: id, type, target, status: 'simulated endpoint: recorded, nothing to enforce' };
   if (bus.enabled()) {
     try { await bus.publishAction(device, { id, type, target, reason, alert: alertId, by, ts }); } catch { /* the graph record is the source of truth */ }
   }
   return { action_id: id, type, target, status: bus.enabled() ? 'queued for the endpoint daemon on rzs.actions.' + device : 'recorded (no event bus)' };
 }
 
-export function createMcpServer({ actor = 'triage-agent', readOnly = false } = {}) {
+// propose: investigations (the triage agent and playbook) pass a callback, and
+// block_host / contain_session then record a recommendation through it and
+// change nothing. A person turns recommendations into actions in the inbox.
+export function createMcpServer({ actor = 'triage-agent', readOnly = false, propose = null } = {}) {
   const server = new McpServer({ name: 'agent-siem-graph', version: '0.1.0' });
   // Read-only callers (a judge link's Pepper or triage run) keep every tool so
   // the agent can still explain what it would do, but action tools refuse.
@@ -280,8 +298,10 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false } = {
     description: 'Deny an external host for an endpoint (or the whole fleet with device="*"). Marks the Host denied in the graph and queues the block for the Ring Zero Security daemon. Use when the graph shows exfiltration or command-and-control to that host. Never block an approved host.',
     inputSchema: { host: z.string(), device: z.string().describe('Endpoint hostname, or * for fleet-wide'), reason: z.string(), alert_id: z.string().optional() },
   }, async ({ host, device, reason, alert_id }) => {
+    if (localTarget(host)) return fail(`${host} is this machine or the local network; refusing to block it`);
     const hr = await gr().roQuery('MATCH (h:Host {name: $host}) RETURN h.approved AS approved', { params: { host } });
     if (hr.data?.[0]?.approved) return fail(`${host} is on the approved list; refusing to block it`);
+    if (propose) { propose({ type: 'block_host', host, device, reason, alert_id }); return text({ recommended: true, note: `Recommended blocking ${host}. A person approves it in the inbox; nothing was changed.` }); }
     await g().query('MERGE (h:Host {name: $host}) SET h.denied = true, h.denied_reason = $reason, h.denied_at = $ts', { params: { host, reason, ts: Date.now() } });
     return text(await recordAction({ device, alertId: alert_id, type: 'block_host', target: host, reason, by: actor }));
   });
@@ -291,6 +311,7 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false } = {
     description: 'Contain one agent session: the daemon stops its process tree from making new network connections or reading secrets until a human releases it. Use when the session is still active and the graph shows intent to exfiltrate.',
     inputSchema: { device: z.string(), session: z.string(), reason: z.string(), alert_id: z.string().optional() },
   }, async ({ device, session, reason, alert_id }) => {
+    if (propose) { propose({ type: 'contain_session', device, session, reason, alert_id }); return text({ recommended: true, note: `Recommended containing session ${session}. A person approves it in the inbox; nothing was changed.` }); }
     await g().query('MATCH (s:Session {id: $session}) SET s.contained = true, s.contained_reason = $reason, s.contained_at = $ts', { params: { session, reason, ts: Date.now() } });
     return text(await recordAction({ device, alertId: alert_id, type: 'contain_session', target: session, reason, by: actor }));
   });

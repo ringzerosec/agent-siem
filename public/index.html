@@ -1135,8 +1135,8 @@
       try {
         const acts = await (await fetch(`/api/actions?device=${encodeURIComponent(id)}`)).json();
         if (acts.length) actRows = `<div class="sh">Enforcement on the endpoint</div>` + acts.map((x) => {
-          const st = x.status === 'applied' ? 'success' : x.status === 'failed' ? 'destructive' : 'warning';
-          return `<div class="row"><span class="n">${esc(x.type.replace('_', ' '))} ${esc(x.target)}</span><span class="badge ${st}">${esc(x.status || 'queued')}</span><span class="m">${esc(x.reason || '')}${x.result ? ' · ' + esc(x.result) : ''}</span></div>`;
+          const st = x.status === 'applied' ? 'success' : x.status === 'failed' ? 'destructive' : x.status === 'simulated' ? 'outline' : 'warning';
+          return `<div class="row"><span class="n">${esc(x.type.replace('_', ' '))} ${esc(x.target)}</span><span class="badge ${st}" ${x.status === 'simulated' ? 'title="Simulated endpoint: there is no daemon to enforce this"' : ''}>${esc(x.status || 'queued')}</span><span class="m">${esc(x.reason || '')}${x.result ? ' · ' + esc(x.result) : ''}</span></div>`;
         }).join('');
       } catch {}
       $('#surface').innerHTML = `${actRows}<div class="sh">AI services</div>${aiRows}<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;

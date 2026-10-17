@@ -25,7 +25,7 @@ import { syncFindings, campaigns, indicatorIntel, backfillResolution, playbooks 
 import { brainHealth } from './brain.js';
 import { aiUsage } from './aiusage.js';
 import { fleetSummary } from './fleet.js';
-import { onFinding, onDecision, listDecisions, approveDecision, dismissDecision, setOwners } from './autopilot.js';
+import { onFinding, onDecision, listDecisions, approveDecision, dismissDecision, setOwners, withdrawAutoActions } from './autopilot.js';
 import { startDeepScan, pendingCommands, storeScan, scanStatus, fleetInventory, proposePolicies, iso42001 } from './governance.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
@@ -294,7 +294,7 @@ app.get('/api/actions', async (req, res, next) => {
   try {
     const device = String(req.query.device || '');
     const r = await gr().roQuery(
-      `MATCH (a:Action {device: $device}) WHERE a.type IN ['block_host', 'contain_session']
+      `MATCH (a:Action {device: $device}) WHERE a.type IN ['block_host', 'contain_session'] AND coalesce(a.status, '') <> 'withdrawn'
        RETURN a.type AS type, a.target AS target, a.status AS status, a.reason AS reason, a.result AS result, a.ts AS ts, a.applied_at AS applied_at
        ORDER BY a.ts DESC LIMIT 20`, { params: { device } });
     res.json(r.data || []);
@@ -635,6 +635,7 @@ app.use((err, _req, res, _next) => {
 });
 
 await connect();
+withdrawAutoActions().catch((e) => console.error('autopilot cleanup:', e.message));
 // One-time backfill of p.last_ts / d.last_ts for graphs ingested before they existed.
 {
   const r = await g().query(`MATCH (p:Process) WHERE p.last_ts IS NULL

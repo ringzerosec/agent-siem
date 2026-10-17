@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto';
 import { g, gr } from './db.js';
 import { startTriage, getJob } from './triage.js';
-import { createMcpServer } from './mcp-tools.js';
+import { createMcpServer, localTarget } from './mcp-tools.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -73,13 +73,21 @@ function escalationEmail(owner, device, alert, verdict) {
   return { to: owner?.email || '', cc: owner?.manager || '', subject, body };
 }
 
-// What to propose, from the alert and the triage verdict.
-function propose(alert, verdict, owner, device) {
-  const out = [];
+// What to propose: an email to the owner, plus the blocks and containment the
+// investigation recommended (taken from the graph by the triage agent, never
+// guessed from the alert text). Nothing here runs until a person says yes.
+function propose(alert, verdict, owner, device, recs = []) {
+  const out = [], seen = new Set();
   if (owner?.email) out.push({ type: 'escalate_to_owner', label: `Email ${owner.name || owner.email}`, args: escalationEmail(owner, device, alert, verdict) });
-  if (verdict?.verdict === 'true_positive_active' || alert.blocked === false) {
-    const host = (alert.summary.match(/(?:connected to|called [^ ]+ at|contacted) ([a-z0-9.-]+\.[a-z]{2,})/i) || [])[1];
-    if (host && /secret|egress|exfil|campaign|shadow/i.test(alert.rule)) out.push({ type: 'block_host', label: `Block ${host} on ${device}`, args: { host, device, reason: alert.title } });
+  for (const r of recs) {
+    if (r.type === 'block_host' && !seen.has('h:' + r.host)) {
+      seen.add('h:' + r.host);
+      out.push({ type: 'block_host', label: `Block ${r.host} ${r.device === '*' ? 'on every endpoint' : 'on ' + device}`, args: { host: r.host, device: r.device, reason: r.reason || alert.title } });
+    }
+    if (r.type === 'contain_session' && !seen.has('s:' + r.session)) {
+      seen.add('s:' + r.session);
+      out.push({ type: 'contain_session', label: `Contain the agent session on ${device}`, args: { device: r.device, session: r.session, reason: r.reason || alert.title } });
+    }
   }
   return out;
 }
@@ -109,7 +117,7 @@ async function investigate(device, alert) {
     const verdict = done?.verdict || null;
     // 2. decide what to propose
     const owner = await ownerOf(device);
-    const proposals = propose(alert, verdict, owner, device);
+    const proposals = propose(alert, verdict, owner, device, done?.recommendations || []);
     const id = 'D-' + randomUUID().slice(0, 6);
     const headline = `${owner?.name ? owner.name + ' (' + device + ')' : device}: ${alert.title}. ${alert.blocked === true ? 'Blocked.' : alert.blocked === false ? 'Not blocked.' : ''}`.trim();
     await g().query(
@@ -179,4 +187,31 @@ async function sendEscalation(d, mail) {
     const info = await tx.sendMail({ from: process.env.SMTP_FROM || 'security@localhost', to: mail.to, cc: mail.cc || undefined, subject: mail.subject, text: mail.body });
     return record('sent', info.messageId || 'sent');
   } catch (e) { return record('failed', e.message); }
+}
+
+// Cleanup that runs at start (idempotent). Before investigations only
+// recommended, the triage playbook queued blocks and containment itself and
+// marked hosts denied and sessions contained. Withdraw those, undo the marks
+// no person asked for, record approved actions on simulated endpoints as
+// simulated, and drop pending proposals to block this machine.
+export async function withdrawAutoActions() {
+  const AUTO = "a.by STARTS WITH 'triage' AND a.type IN ['block_host', 'contain_session'] AND a.status IN ['queued', 'simulated']";
+  const auto = (await gr().roQuery(`MATCH (a:Action) WHERE ${AUTO} RETURN a.type AS type, a.target AS target`)).data || [];
+  let withdrawn = 0;
+  if (auto.length) {
+    const human = new Set(((await gr().roQuery("MATCH (a:Action) WHERE NOT a.by STARTS WITH 'triage' AND a.type IN ['block_host', 'contain_session'] RETURN a.type + ':' + a.target AS k")).data || []).map((x) => x.k));
+    const hosts = [...new Set(auto.filter((a) => a.type === 'block_host' && !human.has('block_host:' + a.target)).map((a) => a.target))];
+    const sessions = [...new Set(auto.filter((a) => a.type === 'contain_session' && !human.has('contain_session:' + a.target)).map((a) => a.target))];
+    if (hosts.length) await g().query('MATCH (h:Host) WHERE h.name IN $hosts SET h.denied = NULL, h.denied_reason = NULL, h.denied_at = NULL', { params: { hosts } });
+    if (sessions.length) await g().query('MATCH (s:Session) WHERE s.id IN $sessions SET s.contained = NULL, s.contained_reason = NULL, s.contained_at = NULL', { params: { sessions } });
+    await g().query(`MATCH (a:Action) WHERE ${AUTO} SET a.status = 'withdrawn', a.result = 'Queued automatically by an investigation before approvals were required; never applied.'`);
+    withdrawn = auto.length;
+  }
+  await g().query("MATCH (a:Action {status: 'queued'}) MATCH (d:Device {id: a.device}) WHERE d.simulated = true SET a.status = 'simulated'");
+  let dropped = 0;
+  for (const d of (await gr().roQuery("MATCH (x:Decision {status: 'pending'}) RETURN x.id AS id, x.proposals AS p")).data || []) {
+    const p = JSON.parse(d.p || '[]'), keep = p.filter((q) => !(q.type === 'block_host' && localTarget(q.args?.host)));
+    if (keep.length !== p.length) { dropped += p.length - keep.length; await g().query('MATCH (x:Decision {id: $id}) SET x.proposals = $p', { params: { id: d.id, p: JSON.stringify(keep) } }); }
+  }
+  if (withdrawn || dropped) console.log(`autopilot: withdrew ${withdrawn} actions queued by investigations, dropped ${dropped} proposals to block local addresses`);
 }

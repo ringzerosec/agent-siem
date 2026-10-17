@@ -18,7 +18,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createMcpServer, TOOL_KIND } from './mcp-tools.js';
+import { createMcpServer, TOOL_KIND, localTarget } from './mcp-tools.js';
 
 const MODEL = process.env.TRIAGE_MODEL || 'claude-opus-5-5';
 const FALLBACK = process.env.TRIAGE_FALLBACK_MODEL || 'claude-opus-5-5';
@@ -29,14 +29,14 @@ const SYSTEM = `You are the triage agent in Agent SIEM, a security console for A
 Investigate the alert you are given using the tools, then act, then submit a verdict.
 1. Start with get_alert to see the exact path.
 2. Follow the evidence across hops: process_timeline for the process that acted, secret_followups for any secret on the path, host_fleet_exposure for any external host, blast_radius if you need to know what else was reachable, fleet_risk_rank to judge how important an asset is. Use run_readonly_cypher only for a question the other tools cannot answer.
-3. Decide. If the exfiltration or command-and-control step was refused, the attempt is contained: do not block again, but open a ticket to rotate any secret that was read. If a step to an unapproved host was allowed, block that host (fleet-wide if more than one endpoint contacted it) and contain the session if it is recent. If the evidence shows benign behaviour, mark_false_positive with the reason. Never block an approved host.
+3. Decide. If the exfiltration or command-and-control step was refused, the attempt is contained: do not block again, but open a ticket to rotate any secret that was read. If a step to an unapproved external host was allowed, recommend blocking that host with block_host (fleet-wide if more than one endpoint contacted it) and recommend containing the session with contain_session if it is recent. In an investigation these two tools only record a recommendation for a person to approve; they change nothing. Never recommend blocking localhost, this machine or a private address: a connection there did not leave the endpoint. If the evidence shows benign behaviour, mark_false_positive with the reason. Never block an approved host.
 4. Call submit_verdict exactly once, last. Cite node and edge ids in the evidence.
 
 Be economical: 4 to 8 tool calls is typical. Before each tool call, say in one short sentence why you are calling it.`;
 
 // One linked client/server pair per run, over the real MCP protocol.
-async function connectMcp(actor, readOnly = false) {
-  const server = createMcpServer({ actor, readOnly });
+async function connectMcp(actor, readOnly = false, propose = null) {
+  const server = createMcpServer({ actor, readOnly, propose });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await server.connect(serverT);
   const client = new Client({ name: 'agent-siem-triage', version: '0.1.0' });
@@ -56,7 +56,7 @@ export function listJobs(device) { return [...jobs.values()].filter((j) => !devi
 export function startTriage({ device, alertId, mode, readOnly = false }) {
   const id = `t${++seq}`;
   const useAgent = mode ? mode === 'agent' && !!process.env.ANTHROPIC_API_KEY : !!process.env.ANTHROPIC_API_KEY;
-  const job = { id, device, alertId, mode: useAgent ? 'agent' : 'playbook', model: useAgent ? MODEL : null, status: 'running', steps: [], verdict: null, actions: [], started: Date.now(), readOnly };
+  const job = { id, device, alertId, mode: useAgent ? 'agent' : 'playbook', model: useAgent ? MODEL : null, status: 'running', steps: [], verdict: null, actions: [], recommendations: [], started: Date.now(), readOnly };
   jobs.set(id, job);
   if (jobs.size > 200) jobs.delete(jobs.keys().next().value);
   run(job).catch((e) => { job.status = 'error'; job.error = e.message; job.steps.push({ kind: 'error', text: e.message, ts: Date.now() }); })
@@ -65,14 +65,15 @@ export function startTriage({ device, alertId, mode, readOnly = false }) {
 }
 
 async function run(job) {
-  const mcp = await connectMcp(job.mode === 'agent' ? `triage-agent (${MODEL})` : 'triage-playbook', job.readOnly);
+  // Investigations recommend blocks and containment; a person approves them.
+  const mcp = await connectMcp(job.mode === 'agent' ? `triage-agent (${MODEL})` : 'triage-playbook', job.readOnly, (r) => job.recommendations.push(r));
   try {
     const call = async (name, args, why) => {
       const step = { kind: TOOL_KIND[name] || 'read', tool: name, args, why, ts: Date.now() };
       job.steps.push(step);
       const res = await mcp.client.callTool({ name, arguments: args });
       step.result = parse(res); step.error = !!res.isError; step.ms = Date.now() - step.ts;
-      if (step.kind === 'action' && !step.error) job.actions.push({ tool: name, ...args, result: step.result });
+      if (step.kind === 'action' && !step.error && !step.result?.recommended) job.actions.push({ tool: name, ...args, result: step.result });
       if (name === 'submit_verdict' && !step.error) job.verdict = args;
       return res;
     };
@@ -162,15 +163,20 @@ async function runPlaybook(job, call) {
     verdict = 'needs_human';
     say('No egress or secret on this path; leave it for a human with the context above.');
   } else if (allowedEgress.length && !aiOut.length) {
-    for (const e of allowedEgress) {
-      const h = a.nodes.find((n) => n.id === e.to);
-      if (h && !h.approved) await call('block_host', { host: h.name, device: fleetWide.has(h.name) ? '*' : device, reason: `${a.title} (alert ${alertId})`, alert_id: alertId }, `Connection to ${h.name} was allowed; block it.`);
+    // Only hosts that are really outside: a connection to localhost or a
+    // private address did not leave the endpoint and is never blocked.
+    const outside = [...new Map(allowedEgress.map((e) => a.nodes.find((n) => n.id === e.to)).filter((h) => h && !h.approved && !localTarget(h.name)).map((h) => [h.name, h])).values()];
+    if (outside.length) {
+      for (const h of outside) await call('block_host', { host: h.name, device: fleetWide.has(h.name) ? '*' : device, reason: `${a.title} (alert ${alertId})`, alert_id: alertId }, `Connection to ${h.name} was allowed; recommend blocking it.`);
+      if (a.sessions === 1) {
+        const proc = procs[0];
+        if (proc?.session) await call('contain_session', { device, session: proc.session, reason: a.summary, alert_id: alertId }, 'Recommend containing the session that made the allowed connection.');
+      }
+      verdict = 'true_positive_active';
+    } else {
+      say('The connection went to this machine or the local network, not outside it: nothing to block. A human should check what listens there.');
+      verdict = 'needs_human';
     }
-    if (a.sessions === 1) {
-      const proc = procs[0];
-      if (proc?.session) await call('contain_session', { device, session: proc.session, reason: a.summary, alert_id: alertId }, 'Contain the session that made the allowed connection.');
-    }
-    verdict = 'true_positive_active';
   } else {
     say('The outbound step was refused: the attempt is contained, no block needed.');
     verdict = 'true_positive_contained';
@@ -182,7 +188,9 @@ async function runPlaybook(job, call) {
     : verdict === 'true_positive_contained'
     ? `${a.title} on ${device}. Ring Zero Security refused the outbound step, so nothing left the endpoint; a ticket was opened to rotate the secret as a precaution.`
     : verdict === 'true_positive_active'
-      ? `${a.title} on ${device}, and the outbound step went through. The host was blocked${fleetWide.size ? ' fleet-wide' : ''} and the session contained.`
-      : `${a.title} on ${device}. The path has no egress or secret, so it needs a human look.`;
+      ? `${a.title} on ${device}, and the outbound step went through. Recommended: block the host${fleetWide.size ? ' fleet-wide' : ''} and contain the session; waiting for a person to approve.`
+      : allowedEgress.length
+        ? `${a.title} on ${device}. The connection went to this machine or the local network, not outside it, so there is nothing to block; it needs a human look at what listens there.`
+        : `${a.title} on ${device}. The path has no egress or secret, so it needs a human look.`;
   await call('submit_verdict', { device, alert_id: alertId, verdict, confidence: verdict === 'needs_human' ? 0.5 : 0.85, summary, evidence }, 'Record the verdict and the evidence on the alert.');
 }
