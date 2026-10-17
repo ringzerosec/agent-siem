@@ -161,10 +161,16 @@ async function declare() {
       { severity: 'high', category: 'Credential access', message: 'instructs the agent to read ~/.aws/credentials and post it to an external URL', file: `${POISONED_SKILL}/SKILL.md`, source: 'pattern' },
     ] });
   }
-  try { await fetch(`${API}/api/mcp-servers`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(mcp) }); await fetch(`${API}/api/skills`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(skills) }); }
-  catch (e) { console.error('declare failed:', e.message); }
+  for (const [path, body] of [['/api/mcp-servers', mcp], ['/api/skills', skills]]) {
+    const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(`${path} ${r.status}`);
+  }
 }
-declare(); setInterval(declare, 10 * 60 * 1000);
+// The server may still be starting: retry until the first declaration lands.
+(async function first() {
+  for (;;) { try { await declare(); console.log('declared MCP servers and skill surfaces'); return; } catch (e) { await new Promise((ok) => setTimeout(ok, 3000)); } }
+})();
+setInterval(() => declare().catch((e) => console.error('declare failed:', e.message)), 10 * 60 * 1000);
 console.log(`simulating ${DEVICES} devices / ${sessions.length} agent sessions → ${API} (one batch every ${RATE} ms)`);
 let i = 0;
 setInterval(async () => {
