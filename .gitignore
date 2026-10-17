@@ -3,3 +3,5 @@ node_modules/
 *.log
 .gstack/
 data/
+brain/.venv*/
+brain/__pycache__/

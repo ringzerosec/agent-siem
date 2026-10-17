@@ -53,9 +53,10 @@ let seq = 0;
 export function getJob(id) { return jobs.get(id); }
 export function listJobs(device) { return [...jobs.values()].filter((j) => !device || j.device === device).slice(-20).reverse(); }
 
-export function startTriage({ device, alertId }) {
+export function startTriage({ device, alertId, mode }) {
   const id = `t${++seq}`;
-  const job = { id, device, alertId, mode: process.env.ANTHROPIC_API_KEY ? 'agent' : 'playbook', model: process.env.ANTHROPIC_API_KEY ? MODEL : null, status: 'running', steps: [], verdict: null, actions: [], started: Date.now() };
+  const useAgent = mode ? mode === 'agent' && !!process.env.ANTHROPIC_API_KEY : !!process.env.ANTHROPIC_API_KEY;
+  const job = { id, device, alertId, mode: useAgent ? 'agent' : 'playbook', model: useAgent ? MODEL : null, status: 'running', steps: [], verdict: null, actions: [], started: Date.now() };
   jobs.set(id, job);
   if (jobs.size > 200) jobs.delete(jobs.keys().next().value);
   run(job).catch((e) => { job.status = 'error'; job.error = e.message; job.steps.push({ kind: 'error', text: e.message, ts: Date.now() }); })
@@ -86,7 +87,8 @@ async function runAgent(job, client, call) {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const anthropic = new Anthropic();
   const { tools } = await client.listTools();
-  const claudeTools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
+  // The triage agent investigates; it never approves or dismisses decisions (that is a human's yes).
+  const claudeTools = tools.filter((t) => !['approve_decision', 'dismiss_decision'].includes(t.name)).map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
   const messages = [{ role: 'user', content: `Triage alert ${job.alertId} on endpoint ${job.device}.` }];
   let model = MODEL;
   for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -128,7 +130,8 @@ async function runPlaybook(job, call) {
   const secrets = a.nodes.filter((n) => n.kind === 'File' && n.secret);
   const hosts = a.nodes.filter((n) => n.kind === 'Host');
   const refused = a.edges.filter((e) => !e.allowed);
-  const egress = a.edges.filter((e) => (e.type === 'CONNECTED' || e.type === 'SENT'));
+  const egress = a.edges.filter((e) => (e.type === 'CONNECTED' || e.type === 'SENT' || e.type === 'CALLED_AI'));
+  const aiOut = a.edges.filter((e) => e.type === 'CALLED_AI').map((e) => a.nodes.find((n) => n.id === e.to)).filter((n) => n && n.approved === false);
   const allowedEgress = egress.filter((e) => e.allowed);
   const evidence = [];
 
@@ -147,10 +150,14 @@ async function runPlaybook(job, call) {
   for (const e of refused) evidence.push(`edge ${e.id} ${e.type} was refused by Ring Zero Security${e.reason ? ` (${e.reason})` : ''}`);
 
   let verdict;
-  if (!egress.length && !secrets.length) {
+  if (aiOut.length) {
+    // Shadow AI: data went to an AI service nobody approved. Not blocked today (the daemon can't recognize it yet).
+    say(`Data went to ${aiOut.map((n) => `${n.provider} (${n.name})`).join(', ')}, which is not an approved AI service.`);
+    verdict = 'true_positive_active';
+  } else if (!egress.length && !secrets.length) {
     verdict = 'needs_human';
     say('No egress or secret on this path; leave it for a human with the context above.');
-  } else if (allowedEgress.length) {
+  } else if (allowedEgress.length && !aiOut.length) {
     for (const e of allowedEgress) {
       const h = a.nodes.find((n) => n.id === e.to);
       if (h && !h.approved) await call('block_host', { host: h.name, device: fleetWide.has(h.name) ? '*' : device, reason: `${a.title} (alert ${alertId})`, alert_id: alertId }, `Connection to ${h.name} was allowed; block it.`);
@@ -166,7 +173,9 @@ async function runPlaybook(job, call) {
   }
   if (secrets.length) await call('open_ticket', { device, title: `Rotate ${secrets.map((s) => s.name.split('/').pop()).join(', ')} on ${device}`, body: `${a.summary}. ${verdict === 'true_positive_contained' ? 'The connection was refused, so rotation is a precaution.' : 'The connection went through; rotate now.'}`, severity: verdict === 'true_positive_active' ? 'critical' : 'high', alert_id: alertId }, 'A secret was read: a human should rotate it.');
 
-  const summary = verdict === 'true_positive_contained'
+  const summary = aiOut.length
+    ? `${a.title} on ${device}: data went to ${aiOut.map((n) => n.provider).join(', ')} (${aiOut.map((n) => n.name).join(', ')}), not an approved AI service${secrets.length ? ', after a secret was read' : ''}. The owner should move to an approved provider or ask for a review.`
+    : verdict === 'true_positive_contained'
     ? `${a.title} on ${device}. Ring Zero Security refused the outbound step, so nothing left the endpoint; a ticket was opened to rotate the secret as a precaution.`
     : verdict === 'true_positive_active'
       ? `${a.title} on ${device}, and the outbound step went through. The host was blocked${fleetWide.size ? ' fleet-wide' : ''} and the session contained.`

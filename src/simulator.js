@@ -190,6 +190,10 @@ for (let i = 0; i < DEVICES; i++) {
   for (let k = 1; k <= n; k++) sessions.push(new Session(device, owner, k, i + k, profile));
 }
 
+// Who owns each laptop (fictional people, example.com: reserved for documentation).
+const PEOPLE = [['Maya Iyer', 'Rohan Mehta'], ['Daniel Okafor', 'Sara Lindqvist'], ['Priya Raman', 'Rohan Mehta'], ['Lucas Moreau', 'Sara Lindqvist'], ['Aisha Khan', 'Tom Becker'], ['Kenji Watanabe', 'Tom Becker'], ['Elena Petrova', 'Rohan Mehta'], ['Marcus Hill', 'Nadia Farouk'], ['Ana Costa', 'Nadia Farouk'], ['Ravi Shankar', 'Tom Becker'], ['Grace Liu', 'Sara Lindqvist'], ['Omar Haddad', 'Nadia Farouk'], ['Julia Novak', 'Rohan Mehta'], ['Samuel Adeyemi', 'Tom Becker'], ['Hannah Weiss', 'Sara Lindqvist']];
+const mail = (n) => n.toLowerCase().replace(/ /g, '.') + '@example.com';
+
 // What each laptop declares (MCP servers) and what the skill scanner found
 // (skill surfaces), re-sent every 10 minutes like a real daemon's scan.
 async function declare() {
@@ -208,7 +212,8 @@ async function declare() {
       { severity: 'high', category: 'Credential access', message: 'instructs the agent to read ~/.aws/credentials and post it to an external URL', file: `${POISONED_SKILL}/SKILL.md`, source: 'pattern' },
     ] });
   }
-  for (const [path, body] of [['/api/mcp-servers', mcp], ['/api/skills', skills]]) {
+  const owners = profiles.map((p, i) => { const [name, mgr] = PEOPLE[i % PEOPLE.length]; return { device: p.device, name, email: mail(name), manager: mail(mgr), team: ENDPOINTS.find((e) => e[0] === p.device)?.[1] || '' }; });
+  for (const [path, body] of [['/api/mcp-servers', mcp], ['/api/skills', skills], ['/api/owners', owners]]) {
     const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...AUTH }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error(`${path} ${r.status}`);
   }

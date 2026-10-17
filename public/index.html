@@ -117,6 +117,20 @@
   .camp-graph { position: sticky; top: 0; }
   #campNet { height: min(640px, calc(100vh - 220px)); background: var(--canvas); }
   @media (max-width: 900px) { #campaigns .camp-body { grid-template-columns: 1fr; } }
+  /* Decision inbox */
+  #inbox { position: fixed; right: 16px; top: 64px; width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 84px); overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 14px 36px rgba(0,0,0,.16); z-index: 60; }
+  #inbox[hidden] { display: none; }
+  #inbox .ih { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); }
+  #inbox .ih .sp { flex: 1; } #inbox .ih .dim { font-size: 12px; }
+  .dec { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .dec .dh { display: flex; gap: 8px; align-items: center; }
+  .dec .dt { font-weight: 600; font-size: 13px; flex: 1; }
+  .dec .ds { font-size: 12.5px; color: var(--muted-foreground); margin-top: 4px; line-height: 1.45; }
+  .dec .mail { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; background: var(--background); }
+  .dec .mail pre { margin: 6px 0 0; white-space: pre-wrap; font: 12px var(--sans); color: var(--foreground); max-height: 160px; overflow: auto; }
+  .dec .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .dec.done { opacity: .6; }
+  #inboxCount.on { background: var(--destructive); color: #fff; border-color: transparent; }
   /* AI usage */
   #ai { padding: 16px 20px; overflow: auto; }
   .ai-stats { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -313,6 +327,7 @@
   <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button><button data-v="campaigns">Campaigns</button><button data-v="ai">AI usage</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
+  <button class="btn sm" id="inboxBtn" title="Analyses autopilot finished, waiting for your yes">Inbox <span class="badge outline" id="inboxCount">0</span></button>
   <button class="btn sm" id="zeroBtn" title="Pepper, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Pepper</span></button>
   <span class="spacer"></span>
   <div class="seg" id="range" role="tablist" aria-label="Time range">
@@ -405,6 +420,10 @@
   </section>
 </div>
 
+<section id="inbox" hidden aria-label="Decision inbox">
+  <div class="ih"><b>Inbox</b><span class="dim">analyses finished on their own, waiting for a yes</span><span class="sp"></span><button class="btn sm" id="inboxClose" aria-label="Close">×</button></div>
+  <div id="inboxList"></div>
+</section>
 <section id="zero" hidden aria-label="Pepper, voice assistant">
   <div class="zt"><div class="orb off" id="zOrb"></div>
     <div class="zs"><b>Pepper</b><span id="zState">asleep</span></div>
@@ -705,7 +724,7 @@
 
   // Screen tools, executed for the engineer.
   async function applyUi(tool, a) {
-    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns', show_ai_usage: 'opened AI usage' }[tool] || tool;
+    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns', show_ai_usage: 'opened AI usage', show_inbox: 'opened the inbox' }[tool] || tool;
     zLine('a', '↳ ' + label);
     try {
       switch (tool) {
@@ -733,6 +752,7 @@
         case 'set_time_range': { const r = { '24h': '24h', today: 'today', yesterday: 'yday', '7d': '7d', all: 'all' }[a.range]; document.querySelector(`#range [data-r="${r}"]`)?.click(); await new Promise((ok) => setTimeout(ok, 400)); break; }
         case 'show_campaigns': setView('campaigns'); break;
         case 'show_ai_usage': setView('ai'); break;
+        case 'show_inbox': $('#inbox').hidden = false; loadInbox(); break;
         case 'run_triage': setView('wall'); if (state.device !== a.device) await openDevice(a.device); investigate(a.alert_id); break;
       }
     } catch (e) { console.warn('ui tool', tool, e); }
@@ -1083,6 +1103,41 @@
     if (v === 'events') loadEvents();
     if (v === 'campaigns') loadCampaigns();
   }
+  // ---- decision inbox (autopilot) ------------------------------------------
+  async function loadInbox() {
+    const all = await (await fetch('/api/decisions')).json();
+    const pending = all.filter((d) => d.status === 'pending');
+    $('#inboxCount').textContent = pending.length; $('#inboxCount').classList.toggle('on', pending.length > 0);
+    if ($('#inbox').hidden) return;
+    const sev = (s) => `<span class="badge ${s === 'critical' ? 'solid' : 'warning'}">${esc(s)}</span>`;
+    $('#inboxList').innerHTML = all.slice(0, 30).map((d) => {
+      const mail = d.proposals.find((p) => p.type === 'escalate_to_owner');
+      return `<div class="dec ${d.status === 'pending' ? '' : 'done'}" data-id="${esc(d.id)}">
+        <div class="dh">${sev(d.severity)}<span class="dt">${esc(d.headline)}</span><span class="dim" style="font-size:11px">${ago(d.ts)}</span></div>
+        <div class="ds">${esc(d.verdict_summary || d.summary)}</div>
+        ${mail ? `<div class="mail"><b>${d.status === 'pending' ? 'Proposed email' : 'Email'}</b> to ${esc(mail.args.to)}${mail.args.cc ? ' · cc ' + esc(mail.args.cc) : ''}<br><span class="dim">${esc(mail.args.subject)}</span><pre>${esc(mail.args.body)}</pre></div>` : ''}
+        <div class="acts">${d.status === 'pending'
+          ? d.proposals.map((p) => `<button class="btn sm primary" data-approve="${esc(p.type)}">${esc(p.label)}</button>`).join('') + `<button class="btn sm" data-dismiss>Dismiss</button><button class="btn sm" data-open>Open endpoint</button>`
+          : `<span class="badge outline">${esc(d.status)}</span> ${(d.results || []).map((r) => `<span class="dim" style="font-size:11.5px">${esc(r.type.replace(/_/g, ' '))}: ${esc(r.status || (r.ok ? 'done' : 'failed'))}</span>`).join(' ')}`}</div></div>`;
+    }).join('') || '<div class="dim" style="padding:14px">Nothing waiting. New critical and high findings are investigated automatically and land here.</div>';
+    $('#inboxList').querySelectorAll('.dec').forEach((el) => {
+      const id = el.dataset.id;
+      el.querySelectorAll('[data-approve]').forEach((b) => b.onclick = async () => { b.disabled = true; await fetch(`/api/decisions/${id}/approve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ only: [b.dataset.approve] }) }); loadInbox(); });
+      el.querySelector('[data-dismiss]')?.addEventListener('click', async () => { await fetch(`/api/decisions/${id}/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'dismissed in the inbox' }) }); loadInbox(); });
+      el.querySelector('[data-open]')?.addEventListener('click', () => { const d = all.find((x) => x.id === id); setView('wall'); openDevice(d.device); });
+    });
+  }
+  $('#inboxBtn').onclick = () => { $('#inbox').hidden = !$('#inbox').hidden; loadInbox(); };
+  $('#inboxClose').onclick = () => { $('#inbox').hidden = true; };
+  setInterval(loadInbox, 8000); loadInbox();
+  // A finished analysis: refresh the inbox and let Pepper raise it.
+  function onDecisionChange(c) {
+    loadInbox();
+    if ($('#zero').hidden || !$('#zAlerts').checked) return;
+    zLine('a do', `analysis ready: ${c.decision.headline}`);
+    if (Z.state === 'armed') wake(c.text);   // a live session already got it from the server
+  }
+
   // ---- AI usage / shadow AI --------------------------------------------------
   async function loadAi() {
     const rows = await (await fetch('/api/ai-usage')).json();
@@ -1210,6 +1265,7 @@
             if (c.type === 'reset') reset = true;
             else if (c.type === 'note') { if (c.device === state.device) loadFeed(state.device); }
             else if (c.type === 'alert') { onAlert(c); dirty.add(c.device); }
+            else if (c.type === 'decision') { onDecisionChange(c); dirty.add(c.device); }
             else if (c.device) dirty.add(c.device);
           }
           if (reset) { await loadWall(); }

@@ -23,6 +23,7 @@ import { createMcpServer } from './mcp-tools.js';
 import { mountPepper, pepperHeadsUp } from './pepper.js';
 import { syncFindings, campaigns, indicatorIntel, backfillResolution } from './intel.js';
 import { aiUsage } from './aiusage.js';
+import { onFinding, onDecision, listDecisions, approveDecision, dismissDecision, setOwners } from './autopilot.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
@@ -107,8 +108,10 @@ async function announceNew(device) {
     announced.add(a.id);
     if (!announceReady) continue;
     const said = `Heads-up: new ${a.severity} alert on ${device}: ${a.title}. ${a.blocked === true ? 'You (the enforcement brain) blocked it.' : a.blocked === false ? 'You did not block it.' : ''}`;
-    broadcast({ type: 'alert', device, alert: { id: a.id, severity: a.severity, title: a.title, blocked: a.blocked ?? null }, text: said });
-    pepperHeadsUp(said, { tool: 'focus_alert', args: { device, alert_id: a.id } });
+    if (process.env.AUTOPILOT === 'off') {
+      broadcast({ type: 'alert', device, alert: { id: a.id, severity: a.severity, title: a.title, blocked: a.blocked ?? null }, text: said });
+      pepperHeadsUp(said, { tool: 'focus_alert', args: { device, alert_id: a.id } });
+    } else onFinding(device, a);   // investigated first; Pepper speaks when the analysis is done
   }
 }
 setTimeout(async () => {   // seed with what exists, then start announcing
@@ -116,6 +119,14 @@ setTimeout(async () => {   // seed with what exists, then start announcing
   announceReady = true;
   backfillResolution().catch((e) => console.error('intel backfill', e.message));
 }, 15000);
+
+// Autopilot finished an investigation: the decision goes to the inbox (change
+// log, so an asleep Pepper can wake) and to any live Pepper session.
+onDecision((d) => {
+  const say = `Analysis finished for ${d.headline} ${d.verdict_summary || ''} Proposed next step${d.proposals.length > 1 ? 's' : ''}: ${d.proposals.join('; ') || 'none'}. Ask whether to go ahead (decision ${d.id}).`;
+  broadcast({ type: 'decision', device: d.device, decision: { id: d.id, headline: d.headline, proposals: d.proposals }, text: say });
+  pepperHeadsUp(say, { tool: 'show_inbox', args: { decision: d.id } });
+});
 
 // --- ingest --------------------------------------------------------------
 // With NATS_URL set, POSTs are published to JetStream and answered 202 once
@@ -243,6 +254,13 @@ app.get('/api/intel/:value', async (req, res, next) => { try { res.json(await in
 app.get('/api/ai-usage', async (req, res, next) => {
   try { res.json(await aiUsage(req.query.device || null, Number(req.query.from || 0))); } catch (e) { next(e); }
 });
+
+// Decision inbox (autopilot): pending analyses waiting for a yes.
+app.get('/api/decisions', async (req, res, next) => { try { res.json(await listDecisions(req.query.status || null)); } catch (e) { next(e); } });
+app.post('/api/decisions/:id/approve', async (req, res, next) => { try { res.json(await approveDecision(req.params.id, { only: req.body?.only, actor: 'dashboard user' })); } catch (e) { next(e); } });
+app.post('/api/decisions/:id/dismiss', async (req, res, next) => { try { res.json(await dismissDecision(req.params.id, String(req.body?.reason || ''), 'dashboard user')); } catch (e) { next(e); } });
+// Who owns each endpoint (for escalations): [{device, name, email, manager, team}]
+app.post('/api/owners', async (req, res, next) => { try { const rows = asArray(req.body); await setOwners(rows); res.json({ ok: rows.length }); } catch (e) { next(e); } });
 
 app.get('/api/bus', async (_req, res, next) => {
   try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }

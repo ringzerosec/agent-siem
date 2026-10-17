@@ -27,12 +27,13 @@ export function brief(n) {
   if (!n) return null;
   const p = n.properties || {};
   const kind = (n.labels || [])[0];
-  const name = p.path || p.name || p.id || p.key || '';
+  const name = p.path || p.name || p.host || p.id || p.key || '';
   const out = { id: n.id, kind, name };
   if (kind === 'Process') Object.assign(out, { pid: p.pid, session: p.session });
   if (kind === 'File') Object.assign(out, { secret: !!p.sensitive, instruction_file: !!p.instruction, installer: !!p.installer });
   if (kind === 'Host') Object.assign(out, { approved: !!p.approved, resolved_as: p.resolved_as || undefined, denied: !!p.denied || undefined });
   if (kind === 'Package') Object.assign(out, { ecosystem: p.ecosystem, version: p.version, vulns: p.vuln_count || 0 });
+  if (kind === 'AiService') Object.assign(out, { provider: p.provider, approved: !!p.approved, gateway: !!p.gateway });
   return out;
 }
 const edgeBrief = (e) => e && ({ id: e.id, type: e.relationshipType, from: e.sourceId, to: e.destinationId, ts: e.properties?.ts, allowed: e.properties?.allowed !== false, reason: e.properties?.reason || undefined, argv: e.properties?.argv || undefined });
@@ -287,6 +288,24 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
     inputSchema: { device: z.string(), alert_id: z.string(), reason: z.string() },
   }, async ({ device, alert_id, reason }) => text(await recordAction({ device, alertId: alert_id, type: 'false_positive', target: alert_id, reason, by: actor })));
 
+  server.registerTool('list_decisions', {
+    title: 'Decision inbox',
+    description: "Analyses autopilot finished on its own and the next steps it proposes (escalate to the employee who owns the endpoint, block a host), waiting for a yes. Pending first.",
+    inputSchema: { status: z.enum(['pending', 'approved', 'dismissed']).optional() },
+  }, async ({ status }) => { const { listDecisions } = await import('./autopilot.js'); return text({ decisions: (await listDecisions(status || null)).slice(0, 15).map(({ proposals, ...d }) => ({ ...d, proposals: proposals.map((p) => ({ type: p.type, label: p.label, ...(p.type === 'escalate_to_owner' ? { to: p.args.to, subject: p.args.subject } : {}) })) })) }); });
+
+  server.registerTool('approve_decision', {
+    title: 'Approve a decision',
+    description: "Carry out a pending decision's proposals (all, or only the listed types such as escalate_to_owner). ONLY call this after the user clearly said yes to it in this conversation.",
+    inputSchema: { id: z.string(), only: z.array(z.string()).optional() },
+  }, async ({ id, only }) => { const { approveDecision } = await import('./autopilot.js'); try { return text(await approveDecision(id, { only, actor })); } catch (e) { return fail(e.message); } });
+
+  server.registerTool('dismiss_decision', {
+    title: 'Dismiss a decision',
+    description: 'Close a pending decision without acting, with a reason (for example: known test, false positive, handled elsewhere).',
+    inputSchema: { id: z.string(), reason: z.string() },
+  }, async ({ id, reason }) => { const { dismissDecision } = await import('./autopilot.js'); return text(await dismissDecision(id, reason, actor)); });
+
   server.registerTool('submit_verdict', {
     title: 'Submit triage verdict',
     description: 'Finish the investigation. Call exactly once, after any actions. The verdict, confidence, reasoning and the evidence (node and edge ids you relied on) are stored on the alert in the graph.',
@@ -312,5 +331,5 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 export const TOOL_KIND = {
   list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
-  block_host: 'action', contain_session: 'action', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
+  block_host: 'action', contain_session: 'action', approve_decision: 'action', dismiss_decision: 'action', list_decisions: 'read', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };
