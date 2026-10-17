@@ -113,33 +113,32 @@
   #triage .verdict { margin: 8px 14px 4px; padding: 10px 12px; border-radius: 8px; background: var(--accent); }
   #triage .verdict .vh { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-weight: 600; }
   #triage .verdict ul { margin: 6px 0 0; padding-left: 18px; font: 11.5px var(--mono); color: var(--muted-foreground); }
-  /* Security engineer dock */
-  #eng { position: fixed; left: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); max-height: min(560px, calc(100vh - 96px)); display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 32px rgba(0,0,0,.14); z-index: 50; }
-  #eng[hidden] { display: none; }
-  #eng .eh { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  #eng .eh b { font-size: 13px; }
-  #eng .st { font: 500 11px var(--mono); padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); }
-  #eng .st.listening { background: rgba(220,38,38,.12); color: var(--destructive); }
-  #eng .st.thinking { background: rgba(124,58,237,.12); color: #7c3aed; }
-  #eng .st.speaking { background: rgba(1,105,111,.12); color: var(--primary); }
-  #eng .eh .sp { flex: 1; }
-  #eng .eh label { font-size: 11px; color: var(--muted-foreground); display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
-  #eng .x { border: 0; background: none; font-size: 16px; color: var(--muted-foreground); cursor: pointer; padding: 0 2px; }
-  #eng .log { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
-  #eng .msg { max-width: 92%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.45; }
-  #eng .msg.me { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
-  #eng .msg.eng { align-self: flex-start; background: var(--accent); border-bottom-left-radius: 4px; }
-  #eng .msg.eng.speaking { box-shadow: inset 3px 0 0 var(--primary); }
-  #eng .act { align-self: flex-start; font: 11px var(--mono); color: var(--muted-foreground); }
-  #eng .act.do { color: var(--destructive); }
-  #eng .hint { color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
-  #eng .hint i { font-style: normal; color: var(--foreground); }
-  #eng .er { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); align-items: center; }
-  #eng .er input { flex: 1; height: 38px; border: 1px solid var(--border); border-radius: 10px; padding: 0 12px; font: 13px var(--sans); background: var(--background); color: var(--foreground); }
-  #eng .er input:focus { outline: 2px solid var(--ring); outline-offset: 1px; }
-  #eng .mic { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--primary); color: #fff; cursor: pointer; display: grid; place-items: center; flex: none; }
-  #eng .mic.listening { background: var(--destructive); box-shadow: 0 0 0 5px rgba(220,38,38,.18); }
-  #eng .mic svg { width: 18px; height: 18px; }
+  /* Zero: voice assistant */
+  #zeroBtn { gap: 8px; }
+  #zeroBtn .zdot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
+  #zeroBtn.armed .zdot { background: var(--primary); }
+  #zeroBtn.live { border-color: var(--primary); color: var(--primary); }
+  #zeroBtn.live .zdot { background: #dc2626; }
+  #zero { position: fixed; left: 16px; bottom: 16px; width: min(380px, calc(100vw - 32px)); background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 14px 36px rgba(0,0,0,.16); z-index: 50; display: flex; flex-direction: column; max-height: min(520px, calc(100vh - 96px)); }
+  #zero[hidden] { display: none; }
+  #zero .zt { display: flex; align-items: center; gap: 12px; padding: 14px; }
+  #zero .orb { --lvl: 0; position: relative; width: 46px; height: 46px; border-radius: 50%; flex: none; background: radial-gradient(circle at 35% 30%, #4fb3b9, var(--primary) 70%); box-shadow: 0 0 0 calc(3px + var(--lvl) * 14px) rgba(1,105,111,.16); }
+  #zero .orb.off { background: radial-gradient(circle at 35% 30%, #c9cfd6, #8b949e 70%); box-shadow: none; }
+  #zero .orb.user { box-shadow: 0 0 0 calc(3px + var(--lvl) * 14px) rgba(124,58,237,.18); }
+  #zero .orb.working { background: radial-gradient(circle at 35% 30%, #a78bfa, #7c3aed 70%); }
+  #zero .zs { flex: 1; min-width: 0; }
+  #zero .zs b { display: block; font-size: 14px; }
+  #zero .zs span { font-size: 12px; color: var(--muted-foreground); }
+  #zero .zb { display: flex; gap: 6px; }
+  #zero .cap { padding: 0 14px 10px; overflow: auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; flex: 1; }
+  #zero .cap .u { align-self: flex-end; max-width: 90%; font-size: 13px; color: #fff; background: var(--primary); padding: 6px 10px; border-radius: 12px 12px 4px 12px; }
+  #zero .cap .z { align-self: flex-start; max-width: 92%; font-size: 13px; line-height: 1.45; background: var(--accent); padding: 6px 10px; border-radius: 12px 12px 12px 4px; }
+  #zero .cap .a { align-self: flex-start; font: 11px var(--mono); color: var(--muted-foreground); }
+  #zero .cap .a.do { color: var(--destructive); }
+  #zero .cap .hint { font-size: 12px; color: var(--muted-foreground); line-height: 1.5; }
+  #zero .cap .hint i { font-style: normal; color: var(--foreground); }
+  #zero .zf { display: flex; gap: 14px; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted-foreground); }
+  #zero .zf label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
   #triage .running { padding: 10px 14px; color: var(--muted-foreground); font-size: 12px; }
   .badge.contained { background: rgba(1,105,111,.10); color: var(--primary); border-color: transparent; }
 
@@ -267,7 +266,7 @@
   <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
-  <button class="btn sm primary" id="engBtn" title="Talk to your security engineer">Ask your engineer</button>
+  <button class="btn sm" id="zeroBtn" title="Zero, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Zero</span></button>
   <span class="spacer"></span>
   <div class="seg" id="range" role="tablist" aria-label="Time range">
     <button data-r="24h" class="on">24 h</button><button data-r="today">Today</button><button data-r="yday">Yesterday</button><button data-r="7d">7 days</button><button data-r="all">All</button>
@@ -346,13 +345,12 @@
   </section>
 </div>
 
-<section id="eng" hidden aria-label="Security engineer">
-  <div class="eh"><b>Security engineer</b><span class="st" id="engSt">ready</span><span class="sp"></span>
-    <label title="Speak replies aloud"><input type="checkbox" id="engVoice" checked> voice</label>
-    <label title="Listen again after each reply"><input type="checkbox" id="engHands"> hands-free</label>
-    <button class="x" id="engClose" aria-label="Close">×</button></div>
-  <div class="log" id="engLog" aria-live="polite"><div class="hint">Ask me anything about the fleet. I'll pull it up on screen while I explain.<br>Try <i>“What should I worry about right now?”</i>, <i>“Why is this one red?”</i>, <i>“Did that key leave anywhere else?”</i>, <i>“Show me what the agent did before that.”</i></div></div>
-  <form class="er" id="engForm"><input id="engIn" placeholder="Ask, or press the mic and talk" autocomplete="off"><button type="button" class="mic" id="engMic" aria-label="Talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button></form>
+<section id="zero" hidden aria-label="Zero, voice assistant">
+  <div class="zt"><div class="orb off" id="zOrb"></div>
+    <div class="zs"><b>Zero</b><span id="zState">asleep</span></div>
+    <div class="zb"><button class="btn sm primary" id="zTalk">Talk</button><button class="btn sm" id="zClose" aria-label="Close">×</button></div></div>
+  <div class="cap" id="zCap" aria-live="polite"><div class="hint">Say <i>“Hey Zero”</i> or press <i>Talk</i>. Talk naturally and interrupt any time. Try <i>“What should I worry about?”</i>, <i>“Show me why the ML Research laptop is red.”</i>, <i>“Did that key go anywhere else?”</i>, <i>“Go to sleep.”</i></div></div>
+  <div class="zf"><label><input type="checkbox" id="zWake" checked> listen for “Hey Zero”</label><label><input type="checkbox" id="zAlerts" checked> speak up on new alerts</label></div>
 </section>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
 <script>
@@ -606,77 +604,28 @@
     renderAlerts(gph.alerts); loadFeed(id); renderEndpoint(id, gph.alerts);
     setTimeout(() => state.net && fitReadable(state.net), 50);
   }
-  // ---- your security engineer (voice + screen control) ---------------------
-  // Talk or type. The engineer (Claude, server side) answers using the graph
-  // tools and moves the screen while it explains: its "ui" events are applied
-  // here, in order, between the sentences it speaks. Voice is Kokoro af_heart
-  // from /api/tts, one sentence at a time; the browser voice is the fallback.
-  const eng = { sid: (() => { try { return localStorage.getItem('engSid') || (localStorage.setItem('engSid', crypto.randomUUID()), localStorage.getItem('engSid')); } catch { return crypto.randomUUID(); } })(), busy: false, queue: [], playing: null, rec: null, pendingDone: false };
-  const engLog = $('#engLog');
-  function engStatus(s) { $('#engSt').textContent = s; $('#engSt').className = 'st ' + s; }
-  function engAdd(cls, text) {
-    engLog.querySelector('.hint')?.remove();
-    const el = document.createElement('div'); el.className = cls; el.textContent = text; engLog.appendChild(el); engLog.scrollTop = engLog.scrollHeight; return el;
+  // ---- Zero: full-duplex voice (OpenAI GPT-Live) ---------------------------
+  // States: off -> armed (listening locally for "Hey Zero") -> live (WebRTC to
+  // GPT-Live; you can talk over it) -> back to armed after a quiet spell.
+  // Zero's backend moves the screen through 'ui' events while it speaks.
+  const Z = { state: 'off', id: null, pc: null, mic: null, es: null, rec: null, lastHeard: 0, working: false, audio: null, raf: 0, cfg: null, wakeText: null };
+  const zCap = $('#zCap');
+  const speak = () => {};   // the triage panel used to speak through here; Zero speaks for itself now
+  function zLine(cls, text, merge) {
+    zCap.querySelector('.hint')?.remove();
+    let el = merge && zCap.lastElementChild?.classList.contains(cls) && zCap.lastElementChild.dataset.k === merge ? zCap.lastElementChild : null;
+    if (el) el.textContent += text; else { el = document.createElement('div'); el.className = cls; el.dataset.k = merge || ''; el.textContent = text; zCap.appendChild(el); }
+    while (zCap.children.length > 40) zCap.firstElementChild.remove();
+    zCap.scrollTop = zCap.scrollHeight;
   }
-  // Make text sound right: hostnames as letters and digits, no symbols.
-  const DIG = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
-  function speakable(t) {
-    return t.replace(/\b([A-Z]{2,4})-([A-Z]{2,4})-(\d{3,4})\b/g, (_, a, b, n) => `${a.split('').join(' ')} ${b.split('').join(' ')} ${n.split('').map((d) => DIG[d]).join(' ')}`)
-      .replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
+  function zSet(state, label) {
+    Z.state = state;
+    $('#zState').textContent = label;
+    $('#zOrb').className = 'orb' + (state === 'off' || state === 'armed' ? ' off' : '') + (Z.working ? ' working' : '');
+    $('#zeroBtn').classList.toggle('armed', state === 'armed'); $('#zeroBtn').classList.toggle('live', state === 'live' || state === 'connecting');
+    $('#zeroBtnTxt').textContent = state === 'live' ? 'Zero · live' : state === 'armed' ? 'Zero · listening' : 'Zero';
+    $('#zTalk').textContent = state === 'live' || state === 'connecting' ? 'Sleep' : 'Talk';
   }
-  const sentences = (t) => (t.match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g) || [t]).map((x) => x.trim()).filter(Boolean);
-  let bestVoice = null;
-  function browserVoice() {
-    if (bestVoice) return bestVoice;
-    const vs = speechSynthesis.getVoices().filter((v) => v.lang?.startsWith('en'));
-    bestVoice = vs.find((v) => /premium|enhanced|natural/i.test(v.name)) || vs.find((v) => /Samantha|Ava|Google US English|Allison|Zoe/i.test(v.name)) || vs[0] || null;
-    return bestVoice;
-  }
-  // Queue of sentences; each starts fetching its audio as soon as it is queued,
-  // so playback is continuous.
-  function say(text, bubble) {
-    if (!$('#engVoice').checked) return;
-    for (const s of sentences(speakable(text))) eng.queue.push({ text: s, bubble });
-    prefetch();
-    if (!eng.playing) playNext();
-  }
-  // Only the next two sentences are synthesized ahead; an interruption aborts
-  // them so the server never works on speech nobody will hear.
-  function prefetch() {
-    for (const item of eng.queue.slice(0, 2)) {
-      if (item.audio) continue;
-      item.ctl = new AbortController();
-      item.audio = fetch(`/api/tts?text=${encodeURIComponent(item.text)}`, { signal: item.ctl.signal }).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
-    }
-  }
-  async function playNext() {
-    const item = eng.queue.shift();
-    document.querySelectorAll('#engLog .speaking').forEach((x) => x.classList.remove('speaking'));
-    if (!item) { eng.playing = null; if (!eng.busy) { engStatus('ready'); if (eng.pendingDone) { eng.pendingDone = false; if ($('#engHands').checked) listen(); } } return; }
-    eng.playing = item; engStatus('speaking'); item.bubble?.classList.add('speaking');
-    if (!item.audio) { eng.queue.unshift(item); prefetch(); eng.queue.shift(); }
-    prefetch();
-    const blob = await item.audio;
-    if (eng.playing !== item) return;   // interrupted while loading
-    if (blob) {
-      const url = URL.createObjectURL(blob); const a = new Audio(url); item.el = a;
-      a.onended = a.onerror = () => { URL.revokeObjectURL(url); if (eng.playing === item) playNext(); };
-      a.play().catch(() => playNext());
-    } else if ('speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance(item.text); u.voice = browserVoice(); u.rate = 1.0;
-      u.onend = u.onerror = () => { if (eng.playing === item) playNext(); };
-      speechSynthesis.speak(u);
-    } else playNext();
-  }
-  function stopSpeaking() {
-    for (const q of eng.queue) q.ctl?.abort();
-    eng.queue = []; const p = eng.playing; eng.playing = null; p?.ctl?.abort();
-    if (p?.el) { p.el.pause(); } try { speechSynthesis.cancel(); } catch {}
-    document.querySelectorAll('#engLog .speaking').forEach((x) => x.classList.remove('speaking'));
-  }
-  // Backwards-compatible hook: the triage panel speaks its verdict through here.
-  function speak(text) { if (!$('#eng').hidden) say(text, engAdd('msg eng', text)); }
-
   // What the user is looking at, so "this one" means something.
   function screenContext() {
     const ctx = { view, time_range: state.range || '24h', wall_filter: state.sev || 'all' };
@@ -693,7 +642,7 @@
   // Screen tools, executed for the engineer.
   async function applyUi(tool, a) {
     const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}` }[tool] || tool;
-    engAdd('act', '↳ ' + label);
+    zLine('a', '↳ ' + label);
     try {
       switch (tool) {
         case 'show_wall':
@@ -723,55 +672,127 @@
     } catch (e) { console.warn('ui tool', tool, e); }
   }
 
-  async function engAsk(text) {
-    text = text.trim(); if (!text || eng.busy) return;
-    stopSpeaking(); engAdd('msg me', text); $('#engIn').value = '';
-    eng.busy = true; engStatus('thinking');
-    try {
-      const r = await (await fetch('/api/engineer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sid: eng.sid, message: text, screen: screenContext() }) })).json();
-      let since = 0;
-      for (;;) {
-        const j = await (await fetch(`/api/engineer/${r.id}?since=${since}`)).json();
-        for (const ev of j.events) {
-          if (ev.type === 'say') say(ev.text, engAdd('msg eng', ev.text));
-          else if (ev.type === 'ui') await applyUi(ev.tool, ev.args || {});
-          else if (ev.type === 'tool') engAdd('act', '· ' + ev.tool.replace(/_/g, ' '));
-          else if (ev.type === 'action') engAdd('act do', '! ' + ev.tool.replace(/_/g, ' ') + ' ' + (ev.args.host || ev.args.session || ev.args.title || ''));
-          else if (ev.type === 'error') { console.warn('engineer error', ev.text); const m = 'I hit a problem reaching the model. Ask me again.'; say(m, engAdd('msg eng', m)); }
-        }
-        since = j.next;
-        if (j.status !== 'running') break;
-        if (!eng.playing) engStatus('thinking');
-        await new Promise((ok) => setTimeout(ok, 350));
-      }
-    } catch (e) { engAdd('msg eng', 'I lost the connection to the server.'); }
-    eng.busy = false; eng.pendingDone = true;
-    if (!eng.playing && !eng.queue.length) { engStatus('ready'); eng.pendingDone = false; if ($('#engHands').checked) listen(); }
-  }
 
-  // Speech in: live words in the input box, sent when you stop talking.
-  function listen() {
+  // Wake word, locally in the browser (Chrome speech recognition), only while asleep.
+  function armWake() {
+    if (!$('#zWake').checked || Z.state === 'live' || Z.state === 'connecting') return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { engAdd('act', 'Speech input needs Chrome. You can type instead.'); return; }
-    if (eng.rec) { eng.rec.stop(); return; }
-    stopSpeaking();
-    const rec = new SR(); rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false;
-    eng.rec = rec; $('#engMic').classList.add('listening'); engStatus('listening');
-    let finalText = '';
-    rec.onresult = (e) => { let t = ''; for (const r of e.results) { t += r[0].transcript; if (r.isFinal) finalText = t; } $('#engIn').value = t; };
-    rec.onerror = (e) => { if (e.error === 'not-allowed') engAdd('act', 'Microphone is blocked for this page.'); };
-    rec.onend = () => { eng.rec = null; $('#engMic').classList.remove('listening'); const t = finalText || $('#engIn').value; if (t.trim()) engAsk(t); else engStatus('ready'); };
-    rec.start();
+    if (!SR) { zSet('off', 'wake word needs Chrome; press Talk'); return; }
+    if (Z.rec) return;
+    const rec = new SR(); rec.lang = 'en-US'; rec.continuous = true; rec.interimResults = true;
+    Z.rec = rec; zSet('armed', 'asleep · say “Hey Zero”');
+    rec.onresult = (e) => {
+      for (let k = e.resultIndex; k < e.results.length; k++) {
+        const t = e.results[k][0].transcript.toLowerCase();
+        const m = t.match(/\b(?:hey|hi|ok|okay|yo)[,\s]+(?:zero|xero|hero|zeero|ziro)\b(.*)/);
+        if (m) { Z.wakeText = m[1].trim() || null; rec.onend = null; try { rec.stop(); } catch {} Z.rec = null; wake(); return; }
+      }
+    };
+    rec.onerror = () => {};
+    rec.onend = () => { Z.rec = null; if (Z.state === 'armed') setTimeout(armWake, 300); };
+    try { rec.start(); } catch { Z.rec = null; }
   }
-  $('#engBtn').onclick = () => { const h = $('#eng').hidden; $('#eng').hidden = !h; if (h) $('#engIn').focus(); else stopSpeaking(); };
-  $('#engClose').onclick = () => { $('#eng').hidden = true; stopSpeaking(); if (eng.rec) eng.rec.stop(); };
-  $('#engForm').onsubmit = (e) => { e.preventDefault(); engAsk($('#engIn').value); };
-  $('#engMic').onclick = listen;
-  window.addEventListener('keydown', (e) => { if (!$('#eng').hidden && e.code === 'Space' && e.target === document.body) { e.preventDefault(); listen(); } if (e.key === 'Escape') stopSpeaking(); });
-  try { if (localStorage.getItem('engHands') === 'on') $('#engHands').checked = true; } catch {}
-  $('#engHands').onchange = () => { try { localStorage.setItem('engHands', $('#engHands').checked ? 'on' : 'off'); } catch {} };
-  // Typed or scripted use (demos, tests): agentSiem.ask('what should I worry about?')
-  window.agentSiem = { ask: engAsk, screen: screenContext };
+  function disarm() { if (Z.rec) { Z.rec.onend = null; try { Z.rec.stop(); } catch {} Z.rec = null; } }
+
+  async function wake(headsUp) {
+    if (Z.state === 'live' || Z.state === 'connecting') { if (headsUp) fetch(`/api/zero/heads/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: headsUp }) }); return; }
+    disarm(); $('#zero').hidden = false; zSet('connecting', 'waking up…');
+    try {
+      const pc = new RTCPeerConnection(); Z.pc = pc;
+      const dc = pc.createDataChannel('oai-events');
+      dc.onmessage = (m) => { try { const e = JSON.parse(m.data); if (e.type === 'session.closed') sleep('session ended'); } catch {} };
+      Z.audio = Z.audio || Object.assign(document.createElement('audio'), { autoplay: true });
+      pc.ontrack = (t) => { Z.audio.srcObject = t.streams[0]; meter(t.streams[0], 'zero'); };
+      Z.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      for (const tr of Z.mic.getTracks()) pc.addTrack(tr, Z.mic);
+      meter(Z.mic, 'user');
+      await pc.setLocalDescription(await pc.createOffer());
+      await new Promise((ok) => { if (pc.iceGatheringState === 'complete') ok(); pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && ok(); setTimeout(ok, 2500); });
+      const r = await fetch('/api/zero/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sdp: pc.localDescription.sdp }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'could not start');
+      Z.id = d.id;
+      await pc.setRemoteDescription({ type: 'answer', sdp: d.sdp });
+      listenEvents(d.id);
+      Z.lastHeard = Date.now(); zSet('live', 'listening · talk any time');
+      pushScreen(); Z.screenTimer = setInterval(pushScreen, 2000);
+      Z.idle = setInterval(() => { if (!Z.working && Date.now() - Z.lastHeard > 45000) sleep('quiet for a while'); }, 5000);
+      if (headsUp) setTimeout(() => fetch(`/api/zero/heads/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: headsUp }) }), 600);
+    } catch (e) {
+      zLine('a do', 'Could not wake Zero: ' + e.message); teardown(); zSet('off', 'asleep'); setTimeout(armWake, 1500);
+    }
+  }
+  function listenEvents(id) {
+    const es = new EventSource(`/api/zero/events/${id}`); Z.es = es;
+    es.onmessage = async (m) => {
+      const e = JSON.parse(m.data);
+      if (e.type === 'transcript') {
+        Z.lastHeard = Date.now();
+        zLine(e.role === 'user' ? 'u' : 'z', e.text, e.role + ':' + (e.role === 'user' ? Z.turnU : Z.turnZ));
+        if (e.role === 'user') { Z.turnZ = (Z.turnZ || 0) + 0; if (/\b(go to sleep|that'?s all|goodbye|good night|stop listening)\b/i.test(zCap.lastElementChild.textContent)) setTimeout(() => sleep('asked to sleep'), 2500); }
+      } else if (e.type === 'ui') { await applyUi(e.tool, e.args || {}); pushScreen(); }
+      else if (e.type === 'tool') { zLine('a', '· ' + e.tool.replace(/_/g, ' ')); }
+      else if (e.type === 'action') { zLine('a do', '! ' + e.tool.replace(/_/g, ' ') + ' ' + (e.args.host || e.args.session || e.args.title || '')); }
+      else if (e.type === 'working') { Z.working = e.on; Z.lastHeard = Date.now(); zSet(Z.state, e.on ? 'checking the graph…' : 'listening · talk any time'); }
+      else if (e.type === 'error') zLine('a do', e.text);
+      else if (e.type === 'closed') sleep(e.reason);
+    };
+  }
+  // Turn boundaries for captions: a new bubble when the speaker changes.
+  Z.turnU = 0; Z.turnZ = 0;
+  const _zl = zLine;
+  zLine = function (cls, text, merge) {
+    if (merge) {
+      const last = zCap.lastElementChild;
+      if (!last || last.className !== cls) { if (cls === 'u') Z.turnU++; else Z.turnZ++; merge = cls + ':' + (cls === 'u' ? Z.turnU : Z.turnZ); }
+      else merge = last.dataset.k;
+    }
+    return _zl(cls, text, merge);
+  };
+  function pushScreen() { if (Z.id) fetch(`/api/zero/screen/${Z.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(screenContext()) }).catch(() => {}); }
+  // Orb reacts to whoever is speaking.
+  function meter(stream, who) {
+    try {
+      const ctx = Z.actx || (Z.actx = new AudioContext()); const src = ctx.createMediaStreamSource(stream);
+      const an = ctx.createAnalyser(); an.fftSize = 256; src.connect(an);
+      Z[who + 'An'] = an;
+      if (!Z.raf) { const buf = new Uint8Array(128); const loop = () => {
+        let lv = 0, w = 'zero';
+        for (const k of ['zero', 'user']) { const a = Z[k + 'An']; if (!a) continue; a.getByteTimeDomainData(buf); let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v - 128)); const x = Math.min(1, m / 50); if (x > lv) { lv = x; w = k; } }
+        $('#zOrb').style.setProperty('--lvl', lv.toFixed(2)); $('#zOrb').classList.toggle('user', w === 'user' && lv > 0.08);
+        Z.raf = requestAnimationFrame(loop); }; loop(); }
+    } catch {}
+  }
+  function teardown() {
+    clearInterval(Z.screenTimer); clearInterval(Z.idle);
+    Z.es?.close(); Z.es = null;
+    Z.mic?.getTracks().forEach((t) => t.stop()); Z.mic = null;
+    try { Z.pc?.close(); } catch {} Z.pc = null;
+    cancelAnimationFrame(Z.raf); Z.raf = 0; Z.zeroAn = Z.userAn = null; $('#zOrb').style.setProperty('--lvl', 0);
+  }
+  async function sleep(reason) {
+    if (Z.state === 'off' || Z.state === 'armed') return;
+    const id = Z.id; Z.id = null; teardown(); Z.working = false;
+    if (id) fetch(`/api/zero/close/${id}`, { method: 'POST' }).catch(() => {});
+    zLine('a', `— asleep${reason ? ' (' + reason + ')' : ''}`);
+    zSet('off', 'asleep'); armWake();
+  }
+  $('#zeroBtn').onclick = () => { const h = $('#zero').hidden; $('#zero').hidden = !h; if (h && Z.state === 'off') armWake(); };
+  $('#zTalk').onclick = () => (Z.state === 'live' || Z.state === 'connecting' ? sleep('') : wake());
+  $('#zClose').onclick = () => { $('#zero').hidden = true; sleep(''); disarm(); zSet('off', 'asleep'); };
+  $('#zWake').onchange = () => { try { localStorage.setItem('zWake', $('#zWake').checked ? 'on' : 'off'); } catch {} if ($('#zWake').checked) armWake(); else if (Z.state === 'armed') { disarm(); zSet('off', 'asleep'); } };
+  $('#zAlerts').onchange = () => { try { localStorage.setItem('zAlerts', $('#zAlerts').checked ? 'on' : 'off'); } catch {} };
+  try { if (localStorage.getItem('zWake') === 'off') $('#zWake').checked = false; if (localStorage.getItem('zAlerts') === 'off') $('#zAlerts').checked = false; } catch {}
+  window.addEventListener('keydown', (e) => { if (!$('#zero').hidden && e.code === 'Space' && e.target === document.body) { e.preventDefault(); $('#zTalk').click(); } });
+  // New critical/high alert from the change log: navigate, and wake Zero to say it.
+  function onAlert(c) {
+    if ($('#zero').hidden || !$('#zAlerts').checked) return;
+    zLine('a do', `new ${c.alert.severity} alert on ${c.device}`);
+    if (Z.state === 'live') return;   // the server already handed Zero the heads-up
+    applyUi('focus_alert', { device: c.device, alert_id: c.alert.id });
+    if (Z.state === 'armed') wake(c.text);
+  }
+  window.agentSiem = { wake, sleep, screen: screenContext };
 
   // ---- triage agent -------------------------------------------------------
   const VERDICT = { true_positive_contained: ['contained', 'contained'], true_positive_active: ['active threat', 'solid'], false_positive: ['false positive', 'outline'], needs_human: ['needs a human', 'warning'] };
@@ -1019,6 +1040,7 @@
           for (const c of d.changes) {
             if (c.type === 'reset') reset = true;
             else if (c.type === 'note') { if (c.device === state.device) loadFeed(state.device); }
+            else if (c.type === 'alert') { onAlert(c); dirty.add(c.device); }
             else if (c.device) dirty.add(c.device);
           }
           if (reset) { await loadWall(); }

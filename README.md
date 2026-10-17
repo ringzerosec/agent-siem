@@ -114,14 +114,29 @@ claude mcp add --transport http agent-siem http://localhost:8080/mcp
 | `block_host`, `contain_session`, `open_ticket`, `mark_false_positive` | actions |
 | `submit_verdict` | verdict, stored on the alert |
 
-### Voice mode
+### Zero: talk to it like your own security engineer
 
-**Voice off/on** in the header. With voice on, the agent reads its verdict
-aloud, and the mic button (or Space) takes commands: "investigate ML WKS
-zero zero nine six", "open data science", "show critical", "status", "back".
-Endpoints can be named by hostname, asset number or team. Speech uses the
-browser's built-in recognition and synthesis (Chrome); nothing is sent to
-this server.
+**Zero** in the header. Say **"Hey Zero"** (or press Talk) and just talk:
+"what should I worry about?", "show me why the Payments laptop is red", "did
+that key go anywhere else?", "block it", "go to sleep". You can interrupt it
+mid-sentence. While it answers, it moves the screen: opens the endpoint,
+spotlights the attack path, opens the event log. When a new critical or high
+alert lands, it speaks up on its own and takes you there.
+
+- **Voice:** OpenAI GPT-Live (`gpt-live-1`), full duplex over WebRTC.
+- **Analysis:** GPT-Live delegates to an OpenAI Responses model
+  (`OPENAI_BACKEND_MODEL`, default `gpt-6-luna`) whose tools are the graph MCP
+  tools plus screen tools. Tools run on this server through the session's
+  sideband WebSocket; the API key never reaches the browser.
+- **Wake word:** listened for locally in the browser (Chrome speech
+  recognition) only while Zero is asleep; a paid GPT-Live session opens on
+  wake and closes after 45 s of quiet or "go to sleep".
+- Changes (block a host, contain a session, open a ticket) need your yes.
+
+```bash
+# .env (gitignored):  OPENAI_API_KEY=...  ANTHROPIC_API_KEY=...  NATS_URL=nats://localhost:4222
+node --env-file=.env src/server.js
+```
 
 ## Alert rules (all Cypher, `src/detect.js`)
 

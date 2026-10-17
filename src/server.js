@@ -21,6 +21,7 @@ import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
 import { ask, getEngineerJob, reset as resetEngineer } from './engineer.js';
 import { synth, warmTts } from './tts.js';
+import { mountZero, zeroHeadsUp } from './zero.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
@@ -85,10 +86,32 @@ setInterval(async () => {
   try {
     const alerts = await recompute(next);
     const dr = await gr().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session: next } });
-    broadcast({ type: 'update', device: dr.data?.[0]?.id, session: next, alerts: alerts.length });
+    const dev = dr.data?.[0]?.id;
+    broadcast({ type: 'update', device: dev, session: next, alerts: alerts.length });
+    if (dev) await announceNew(dev);
   } catch (e) { console.error('detect', next, e.message); }
   finally { detectBusy = false; }
 }, 250);
+
+// New critical/high alerts become a change-log entry ('alert'), so a browser
+// with Zero asleep can wake it, and a heads-up for any live Zero session.
+// Alerts that already existed at startup are not announced.
+const announced = new Set(); let announceReady = false;
+async function announceNew(device) {
+  const all = await detectDevice(device, { from: Date.now() - 6 * 3600 * 1000, to: Date.now() + 60_000 });
+  for (const a of all) {
+    if (!['critical', 'high'].includes(a.severity) || announced.has(a.id)) continue;
+    announced.add(a.id);
+    if (!announceReady) continue;
+    const said = `Heads-up: new ${a.severity} alert on ${device}: ${a.title}. ${a.blocked === true ? 'Ring Zero Security blocked it.' : a.blocked === false ? 'It was not blocked.' : ''}`;
+    broadcast({ type: 'alert', device, alert: { id: a.id, severity: a.severity, title: a.title, blocked: a.blocked ?? null }, text: said });
+    zeroHeadsUp(said, { tool: 'focus_alert', args: { device, alert_id: a.id } });
+  }
+}
+setTimeout(async () => {   // seed with what exists, then start announcing
+  try { for (const row of (await gr().roQuery('MATCH (d:Device) RETURN d.id AS id')).data || []) await announceNew(row.id); } catch { /* best effort */ }
+  announceReady = true;
+}, 15000);
 
 // --- ingest --------------------------------------------------------------
 // With NATS_URL set, POSTs are published to JetStream and answered 202 once
@@ -132,6 +155,9 @@ app.post('/api/notes', async (req, res, next) => {
     await writeNotes(notes); res.json({ ingested: notes.length });
   } catch (e) { next(e); }
 });
+
+// --- Zero: full-duplex voice (OpenAI GPT-Live) --------------------------------
+mountZero(app);
 
 // --- security engineer (conversational, drives the screen) -----------------
 app.post('/api/engineer', (req, res) => {
