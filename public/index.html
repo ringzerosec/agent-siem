@@ -7,7 +7,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <style>
   /* Ring Zero Security theme: the desktop app's shadcn tokens (teal #01696f
-     primary, Geist, radius .625rem). Severity colours are fixed and never the
+     primary, Geist, radius .625rem). Light like the app, regardless of the OS
+     setting; data-theme="dark" on <html> is the only way to get the dark variant. Severity colours are fixed and never the
      brand colour: red for refused/critical, amber for flagged/high. */
   :root {
     --background: #fafafa; --foreground: #0a0a0a; --card: #ffffff; --card-foreground: #0a0a0a;
@@ -23,15 +24,6 @@
     --sans: "Geist", ui-sans-serif, system-ui, sans-serif; --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     color-scheme: light;
   }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-    --background: #0b0f10; --foreground: #e7ecec; --card: #111617; --card-foreground: #e7ecec;
-    --secondary: #1a2122; --muted: #1a2122; --muted-foreground: #94a3a4; --accent: #1a2122; --accent-foreground: #e7ecec;
-    --border: #243031; --teal-light: #0f3f43;
-    --event-allow-bg: #052e16; --event-allow-text: #86efac; --event-pii-bg: #431407; --event-pii-text: #fcd34d;
-    --event-block-bg: #450a0a; --event-block-text: #fca5a5; --event-injection-bg: #3b0764; --event-injection-text: #d8b4fe; --event-muted-bg: #1a2122;
-    --canvas: #0e1314; --edge: #2c3a3b; --node-border: #243031; --label: #e7ecec; --label-bg: rgba(14,19,20,.85);
-    color-scheme: dark;
-  } }
   :root[data-theme="dark"] {
     --background: #0b0f10; --foreground: #e7ecec; --card: #111617; --card-foreground: #e7ecec;
     --secondary: #1a2122; --muted: #1a2122; --muted-foreground: #94a3a4; --accent: #1a2122; --accent-foreground: #e7ecec;
