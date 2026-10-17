@@ -406,7 +406,10 @@
   async function refreshTile(id, t, d) {
     const sig = d ? `${d.actions}:${d.procs}:${d.alerts}` : null;
     if (sig && sig === t.sig) return;      // nothing changed on this device
-    const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
+    if (state.device) return;              // a device view is open; the wall is hidden behind it
+    if (t.had && Date.now() - (t.at || 0) < 5000) return;   // at most one redraw per tile every 5 s
+    t.at = Date.now();
+    const gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}?cap=200`))).json();
     t.sig = sig;
     const { vnodes, vedges } = toVis(gph.nodes, gph.edges, gph.alerts, true);
     const have = new Set(t.nodes.getIds());
