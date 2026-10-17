@@ -17,6 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { connect, g, gr, wipe } from './db.js';
 import { ingestMany, ingestMcpServers, ingestNotes } from './ingest.js';
 import * as bus from './bus.js';
+import { startTriage, getJob, listJobs } from './triage.js';
+import { createMcpServer } from './mcp-tools.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -127,6 +130,41 @@ app.post('/api/notes', async (req, res, next) => {
     await writeNotes(notes); res.json({ ingested: notes.length });
   } catch (e) { next(e); }
 });
+
+// --- triage agent ----------------------------------------------------------
+app.post('/api/triage', (req, res) => {
+  const { device, alert_id: alertId } = req.body || {};
+  if (!device || !alertId) return res.status(400).json({ error: 'device and alert_id are required' });
+  const job = startTriage({ device: String(device), alertId: String(alertId) });
+  res.status(202).json({ id: job.id, mode: job.mode, model: job.model });
+});
+app.get('/api/triage/:id', (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'no such triage run' });
+  res.json(job);
+});
+// Stored verdicts, actions and tickets for an endpoint (survive restarts).
+app.get('/api/triage', async (req, res, next) => {
+  try {
+    const device = String(req.query.device || '');
+    const r = await gr().roQuery(
+      `MATCH (d:Device {id: $device})-[:TRIAGED|ACTION|TICKET]->(x)
+       RETURN labels(x)[0] AS kind, x ORDER BY x.ts DESC LIMIT 100`, { params: { device } });
+    res.json({ running: listJobs(device).filter((j) => j.status === 'running').map((j) => ({ id: j.id, alertId: j.alertId })),
+      records: (r.data || []).map((row) => ({ kind: row.kind, id: row.x.id, ...row.x.properties })) });
+  } catch (e) { next(e); }
+});
+
+// The same graph tools over MCP Streamable HTTP, for any outside MCP client
+// (Claude Code, Claude Desktop, Cursor):  claude mcp add --transport http agent-siem http://localhost:8080/mcp
+app.post('/mcp', async (req, res) => {
+  const server = createMcpServer({ actor: `mcp-client:${req.get('user-agent') || 'unknown'}`.slice(0, 80) });
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on('close', () => { transport.close(); server.close(); });
+  try { await server.connect(transport); await transport.handleRequest(req, res, req.body); }
+  catch (e) { if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: e.message }, id: null }); }
+});
+app.get('/mcp', (_req, res) => res.status(405).set('Allow', 'POST').json({ jsonrpc: '2.0', error: { code: -32000, message: 'Use POST (stateless Streamable HTTP).' }, id: null }));
 
 app.get('/api/bus', async (_req, res, next) => {
   try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }

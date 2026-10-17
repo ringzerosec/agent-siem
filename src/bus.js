@@ -14,6 +14,7 @@
 //   rzs.events.<device>   one agent event per message, Nats-Msg-Id = event id
 //   rzs.mcp.<device>      one MCP inventory snapshot (array) per message
 //   rzs.notes.<device>    one array of commentary lines per message
+//   rzs.actions.<device>  response actions for the endpoint daemon (block, contain)
 //
 // Other consumers (CEF forwarders, archive, detection workers) can attach
 // their own durable consumer to the same stream without touching this one.
@@ -61,6 +62,12 @@ export async function publishArray(kind, items) {
   const byDevice = new Map();
   for (const it of items) { const d = token(it.device); if (!byDevice.has(d)) byDevice.set(d, []); byDevice.get(d).push(it); }
   for (const [d, arr] of byDevice) await js.publish(`rzs.${kind}.${d}`, sc.encode(JSON.stringify(arr)));
+}
+
+// Response actions decided in the SIEM (block a host, contain a session),
+// for the endpoint daemon to subscribe to.
+export async function publishAction(device, action) {
+  await js.publish(`rzs.actions.${token(device)}`, sc.encode(JSON.stringify(action)));
 }
 
 // Drain the stream forever: fetch up to BATCH messages, group them by kind,

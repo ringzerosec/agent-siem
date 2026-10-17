@@ -12,6 +12,7 @@ services:
     environment:
       FALKORDB_HOST: falkordb
       NATS_URL: nats://nats:4222
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # optional: Claude triage agent (playbook without it)
       PORT: "8080"
     ports: ["8080:8080"]
     depends_on: [falkordb, nats]

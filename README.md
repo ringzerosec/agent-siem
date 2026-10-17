@@ -1,6 +1,6 @@
 # Agent SIEM
 
-A live security wall for AI coding agents across a fleet. Every employee device
+A live security wall for AI agents across a fleet, with a triage agent that investigates alerts through the graph and acts on what it finds. Every employee device
 is a tile showing its own live provenance graph. Every action an agent takes on
 that device (process spawned, file read or written, program executed, network
 connection, MCP tool call) becomes an edge in a **provenance graph in
@@ -65,6 +65,63 @@ is no product. All queries are in [`cypher/queries.cypher`](cypher/queries.cyphe
 
 `sensitive`, `instruction`, `privileged`, `installer` and `approved` are set at
 ingest from path and host rules (`src/ingest.js`); everything else is a query.
+
+## Triage agent: investigates through the graph, then acts
+
+Every alert has an **Investigate with agent** button. The agent is an MCP
+client: it connects to the graph's MCP server, lists the tools, and Claude
+chooses which to call. A typical run:
+
+1. `get_alert`: the exact path (nodes, edges, timestamps, allowed or refused).
+2. `process_timeline`: what the acting process did before and after.
+3. `secret_followups`: who else in the fleet read that secret, and whether
+   anything left afterwards (multi-hop across endpoints).
+4. `host_fleet_exposure`: one machine or a campaign? Counts attempts per
+   endpoint and how many Ring Zero Security refused.
+5. `fleet_risk_rank`: FalkorDB **PageRank** over the whole provenance graph,
+   to judge how central the secret or host is.
+6. Act, based on what the graph showed: `block_host` (fleet-wide when more
+   than one endpoint contacted it), `contain_session`, `open_ticket` (rotate
+   the credential), or `mark_false_positive`. Approved hosts are never blocked.
+7. `submit_verdict`: verdict, confidence, a summary a CISO can read, and the
+   evidence, each fact citing node and edge ids.
+
+Actions are written back into the graph as `(:Action)`, `(:Ticket)` and
+`(:Triage)` nodes linked to the endpoint, and published on NATS as
+`rzs.actions.<device>` for the endpoint daemon. The panel shows every step:
+why the agent called a tool, what came back, what it did.
+
+```bash
+ANTHROPIC_API_KEY=... NATS_URL=nats://localhost:4222 npm start   # Claude agent (TRIAGE_MODEL, default claude-fable-5-1)
+```
+
+Without a key, the same investigation runs as a fixed **playbook** over the
+same MCP tools, and the panel says so.
+
+### The graph as an MCP server
+
+The same 13 tools are served over MCP Streamable HTTP, so any MCP client can
+investigate the fleet:
+
+```bash
+claude mcp add --transport http agent-siem http://localhost:8080/mcp
+```
+
+| Tool | Kind |
+|---|---|
+| `list_alerts`, `get_alert`, `process_timeline`, `blast_radius`, `host_fleet_exposure`, `secret_followups`, `run_readonly_cypher` | read-only Cypher |
+| `fleet_risk_rank` | graph algorithm (`algo.pageRank`) |
+| `block_host`, `contain_session`, `open_ticket`, `mark_false_positive` | actions |
+| `submit_verdict` | verdict, stored on the alert |
+
+### Voice mode
+
+**Voice off/on** in the header. With voice on, the agent reads its verdict
+aloud, and the mic button (or Space) takes commands: "investigate ML WKS
+zero zero nine six", "open data science", "show critical", "status", "back".
+Endpoints can be named by hostname, asset number or team. Speech uses the
+browser's built-in recognition and synthesis (Chrome); nothing is sent to
+this server.
 
 ## Alert rules (all Cypher, `src/detect.js`)
 
@@ -225,6 +282,10 @@ your allowlist.
 | `GET /api/alerts` | all alerts across sessions |
 | `GET /api/changes?since=` | change log the dashboard polls for live updates |
 | `GET /api/bus` | ingest mode and JetStream backlog |
+| `POST /api/triage` | start a triage run `{device, alert_id}` |
+| `GET /api/triage/:id` | steps, actions and verdict of one run |
+| `GET /api/triage?device=` | stored verdicts, actions and tickets |
+| `POST /mcp` | the graph tools over MCP Streamable HTTP |
 | `POST /api/reset` | wipe the graph |
 
 ## Also a benchmark monitor
@@ -237,7 +298,8 @@ edges on it are the evidence.
 
 ## Stack
 
-Node 24, Express 5, `falkordb` 6.8 (the official Node client), NATS JetStream
+Node 24, Express 5, `falkordb` 6.8 (the official Node client), MCP TypeScript SDK,
+Anthropic SDK for the triage agent, NATS JetStream
 (`nats` 2.29) for the event pipeline, vis-network for the canvas. No build step. Apache-2.0.
 
 ## Built with

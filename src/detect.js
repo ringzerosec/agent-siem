@@ -4,6 +4,7 @@
 // analyst can see exactly which process read what and where it went. Rules
 // only ever add alerts; nothing here can clear a kernel refusal.
 
+import { createHash } from 'node:crypto';
 import { gd, gr } from './db.js';
 
 // Each rule: id, severity, title, Cypher returning (nodes, edges, summary)
@@ -351,6 +352,8 @@ export async function detectDevice(deviceId, win) {
     prev.nodes = [...new Set([...prev.nodes, ...a.nodes])]; prev.edges = [...new Set([...prev.edges, ...a.edges])];
     if (a.blocked === false) prev.blocked = false;
   }
+  // Stable id per finding on this device, so an agent or a person can refer to it.
+  for (const a of byKey.values()) a.id = createHash('sha1').update(`${deviceId}|${a.rule}|${a.summary}`).digest('hex').slice(0, 10);
   out.push(...byKey.values());
   const order = { critical: 0, high: 1, medium: 2, info: 3 };
   out.sort((a, b) => order[a.severity] - order[b.severity]);

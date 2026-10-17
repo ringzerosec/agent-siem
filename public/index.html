@@ -96,6 +96,26 @@
   .alert .attack { font: 10.5px var(--mono); color: var(--muted-foreground); margin-top: 8px; }
   .alert .resp { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 12px; line-height: 1.45; }
   .alert .resp b { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--primary); margin-bottom: 2px; }
+  /* Triage agent */
+  .alert .inv { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+  .btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .tv { display: inline-flex; gap: 4px; align-items: center; }
+  #triage { padding: 4px 0 8px; }
+  #triage .step { display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12.5px; }
+  #triage .step:first-child { border-top: 0; }
+  #triage .k { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font: 600 10px var(--mono); color: #fff; background: var(--muted-foreground); }
+  #triage .k.read { background: #2b8a92; } #triage .k.algorithm { background: #7c3aed; } #triage .k.action { background: #dc2626; } #triage .k.verdict { background: var(--primary); } #triage .k.thought { background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); }
+  #triage .tool { font: 600 12px var(--mono); }
+  #triage .why { color: var(--muted-foreground); }
+  #triage .res { grid-column: 2; font: 11px var(--mono); color: var(--muted-foreground); white-space: pre-wrap; word-break: break-word; }
+  #triage .res.err { color: var(--destructive); }
+  #triage .verdict { margin: 8px 14px 4px; padding: 10px 12px; border-radius: 8px; background: var(--accent); }
+  #triage .verdict .vh { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-weight: 600; }
+  #triage .verdict ul { margin: 6px 0 0; padding-left: 18px; font: 11.5px var(--mono); color: var(--muted-foreground); }
+  #voiceBtn.on { border-color: var(--primary); color: var(--primary); }
+  #micBtn.listening { background: var(--destructive); color: #fff; border-color: var(--destructive); }
+  #triage .running { padding: 10px 14px; color: var(--muted-foreground); font-size: 12px; }
   .badge.contained { background: rgba(1,105,111,.10); color: var(--primary); border-color: transparent; }
 
   /* The wall */
@@ -222,6 +242,9 @@
   <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
+  <button class="btn sm" id="voiceBtn" aria-pressed="false" title="Voice mode: speak commands, hear verdicts">Voice off</button>
+  <button class="btn sm" id="micBtn" hidden title="Say: investigate ML-WKS-0096 · open data science · show critical · status · back">🎙 Speak</button>
+  <span class="dim" id="voiceHeard" style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
   <span class="spacer"></span>
   <div class="seg" id="range" role="tablist" aria-label="Time range">
     <button data-r="24h" class="on">24 h</button><button data-r="today">Today</button><button data-r="yday">Yesterday</button><button data-r="7d">7 days</button><button data-r="all">All</button>
@@ -281,6 +304,10 @@
     <div class="card">
       <div class="card-header"><h2 class="sec">Alerts by threat <span class="dim">· click to expand</span></h2><span class="badge outline" id="alertCount">0</span></div>
       <div class="frame" id="alerts"></div>
+    </div>
+    <div class="card" id="triageCard" hidden>
+      <div class="card-header"><h2 class="sec">Triage agent <span class="dim" id="triageMode"></span></h2><span class="badge outline" id="triageStatus"></span></div>
+      <div id="triage"></div>
     </div>
     <div class="card">
       <div class="card-header"><h2 class="sec">Session feed <span class="dim">· prompts and narrative</span></h2></div>
@@ -544,9 +571,135 @@
       gph = { ...gph, nodes: gph.nodes.filter((n) => keepN.has(n.id)), edges: gph.edges.filter((e) => keepE.has(e.id) && keepN.has(e.sourceId) && keepN.has(e.destinationId)) };
     }
     if (!state.focus) render(gph.nodes, gph.edges, gph.alerts, `<b>${esc(id)}</b> · ${gph.nodes.length} nodes · ${gph.alerts.filter((a) => a.severity !== 'info').length} alerts`);
+    if (state.lastTriageDevice !== id) { $('#triageCard').hidden = true; state.lastTriageDevice = id; await loadTriaged(id); }
     renderAlerts(gph.alerts); loadFeed(id); renderEndpoint(id, gph.alerts);
     setTimeout(() => state.net && fitReadable(state.net), 50);
   }
+  // ---- voice mode ---------------------------------------------------------
+  // Browser speech only (no audio leaves through our server). Off by default.
+  // Commands: "investigate <endpoint or team>", "open <endpoint or team>",
+  // "show critical", "show everything", "events", "status", "back".
+  state.voice = (() => { try { return localStorage.getItem('voice') === 'on'; } catch { return false; } })();
+  function speak(text) {
+    if (!state.voice || !('speechSynthesis' in window) || !text) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.replace(/[A-Z]{2,4}-[A-Z]{2,4}-(\d{4})/g, (m) => m.split('-').join(' ')));
+    u.rate = 1.02; speechSynthesis.speak(u);
+  }
+  function setVoice(on) {
+    state.voice = on; try { localStorage.setItem('voice', on ? 'on' : 'off'); } catch { /* private mode */ }
+    $('#voiceBtn').textContent = on ? 'Voice on' : 'Voice off'; $('#voiceBtn').classList.toggle('on', on); $('#voiceBtn').setAttribute('aria-pressed', String(on));
+    $('#micBtn').hidden = !on || !(window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!on) { speechSynthesis?.cancel(); $('#voiceHeard').textContent = ''; }
+  }
+  const NUM = { zero: '0', oh: '0', o: '0', one: '1', two: '2', to: '2', too: '2', three: '3', four: '4', for: '4', five: '5', six: '6', seven: '7', eight: '8', ate: '8', nine: '9' };
+  const norm = (t) => String(t).toLowerCase().split(/[\s-]+/).map((w) => NUM[w] ?? w).join('').replace(/[^a-z0-9]/g, '');
+  // Endpoint from speech: full hostname, its 4-digit asset number, or the team name.
+  function findDevice(said) {
+    const n = norm(said), devs = [...(state.devices?.values() || [])];
+    return devs.find((d) => n.includes(norm(d.id)))
+      || devs.filter((d) => { const num = d.id.match(/(\d{3,4})$/)?.[1]; return num && n.includes(num); })[0]
+      || devs.find((d) => d.owner && n.includes(norm(d.owner)));
+  }
+  async function runVoiceCommand(said) {
+    const t = said.toLowerCase();
+    $('#voiceHeard').textContent = `“${said}”`;
+    if (/\b(back|wall|all devices|home)\b/.test(t)) { setView('wall'); if (state.device) closeDevice(); return speak('Back to the wall.'); }
+    if (/\bevents?\b/.test(t)) { setView('events'); return speak('Showing the event log.'); }
+    if (/\b(status|summary|how are we)\b/.test(t)) {
+      const devs = [...(state.devices?.values() || [])];
+      const crit = devs.filter((d) => d.critical).length, cont = devs.reduce((n, d) => n + (d.contained || 0), 0);
+      return speak(`${devs.length} endpoints. ${crit} with critical alerts. ${cont} attack paths contained by Ring Zero Security.`);
+    }
+    if (/\bcritical\b/.test(t)) { $('#statCrit').click(); return speak('Showing endpoints with critical alerts.'); }
+    if (/\b(everything|all endpoints|clear filter)\b/.test(t)) { state.sev = 'x'; $('#statDevices').click(); return speak('Showing every endpoint.'); }
+    const d = findDevice(said);
+    if (!d) return speak('I did not catch which endpoint.');
+    setView('wall'); await openDevice(d.id);
+    if (/\b(investigate|triage|check|analy[sz]e)\b/.test(t)) {
+      const a = (state.graph?.alerts || []).find((x) => x.severity !== 'info');
+      if (!a) return speak(`${d.id.split('-').join(' ')} has no alerts to investigate.`);
+      speak(`Investigating ${a.title} on ${d.id}.`);
+      return investigate(a.id);
+    }
+    speak(`${d.id}. ${d.owner || ''}. ${d.alerts ? d.alerts + ' alerts' : 'Clean'}.`);
+  }
+  function listen() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const rec = new SR(); rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 1;
+    $('#micBtn').classList.add('listening'); $('#voiceHeard').textContent = 'listening…';
+    rec.onresult = (e) => runVoiceCommand(e.results[0][0].transcript);
+    rec.onerror = (e) => { $('#voiceHeard').textContent = e.error === 'not-allowed' ? 'microphone blocked' : ''; };
+    rec.onend = () => $('#micBtn').classList.remove('listening');
+    rec.start();
+  }
+  $('#voiceBtn').onclick = () => { setVoice(!state.voice); if (state.voice) speak('Voice mode on.'); };
+  $('#micBtn').onclick = listen;
+  window.addEventListener('keydown', (e) => { if (state.voice && e.code === 'Space' && e.target === document.body) { e.preventDefault(); listen(); } });
+  setVoice(state.voice);
+  // Same commands without a microphone (demos, tests): agentSiem.command('investigate ML-WKS-0096')
+  window.agentSiem = { command: runVoiceCommand, findDevice };
+
+  // ---- triage agent -------------------------------------------------------
+  const VERDICT = { true_positive_contained: ['contained', 'contained'], true_positive_active: ['active threat', 'solid'], false_positive: ['false positive', 'outline'], needs_human: ['needs a human', 'warning'] };
+  const verdictBadge = (v) => `<span class="badge ${VERDICT[v]?.[1] || 'outline'}" title="Triage agent verdict">agent: ${esc(VERDICT[v]?.[0] || v)}</span>`;
+  const KIND_MARK = { read: 'Q', algorithm: 'Σ', action: '!', verdict: '✓', thought: '·' };
+  // One line a person can read for each tool result.
+  function resultLine(tool, r) {
+    if (!r) return '';
+    if (r.error) return r.error;
+    switch (tool) {
+      case 'get_alert': return `${r.nodes?.length} nodes, ${r.edges?.length} edges · ${r.edges?.filter((e) => !e.allowed).length} refused · ${r.mitre || ''}`;
+      case 'process_timeline': return `${r.steps?.length} steps: ` + (r.steps || []).slice(0, 4).map((x) => `${x.type.toLowerCase()} ${x.target?.name || ''}`).join(', ');
+      case 'secret_followups': return `${r.readers?.length} reader(s) fleet-wide · ${r.readers?.reduce((n, x) => n + x.egress_after.length, 0)} egress after read`;
+      case 'host_fleet_exposure': return `${r.total_attempts} attempt(s) from ${r.endpoints} endpoint(s) · ${r.allowed} allowed`;
+      case 'blast_radius': return Object.entries(r.counts || {}).map(([k, v]) => `${v} ${k}`).join(' · ');
+      case 'fleet_risk_rank': return 'PageRank top: ' + (r.ranked || []).slice(0, 3).map((x) => x.name.split('/').pop()).join(', ');
+      case 'run_readonly_cypher': return `${r.rows?.length} row(s)`;
+      case 'block_host': case 'contain_session': return `${r.type} ${r.target} · ${r.status}`;
+      case 'open_ticket': return `ticket #${r.ticket_id} · ${r.title}`;
+      case 'submit_verdict': return 'stored on the alert in the graph';
+      default: return JSON.stringify(r).slice(0, 160);
+    }
+  }
+  function renderTriage(job) {
+    $('#triageCard').hidden = false;
+    $('#triageMode').textContent = job.mode === 'agent' ? `· Claude (${job.model}) over MCP` : '· playbook over MCP (set ANTHROPIC_API_KEY for the Claude agent)';
+    $('#triageStatus').textContent = job.status === 'running' ? 'investigating…' : job.status;
+    const steps = job.steps.map((st) => st.kind === 'thought'
+      ? (st.text ? `<div class="step"><span class="k thought">${KIND_MARK.thought}</span><span class="why">${esc(st.text)}</span></div>` : '')
+      : `<div class="step"><span class="k ${st.kind}" title="${st.kind}">${KIND_MARK[st.kind] || '?'}</span><span><span class="tool">${esc(st.tool)}</span>${st.why ? ` <span class="why">· ${esc(st.why)}</span>` : ''}</span><div class="res ${st.error ? 'err' : ''}">${esc(resultLine(st.tool, st.result))}</div></div>`).join('');
+    const v = job.verdict;
+    const verdictHtml = v ? `<div class="verdict"><div class="vh">${verdictBadge(v.verdict)}<span class="dim" style="font-weight:400">confidence ${Math.round(v.confidence * 100)}%</span></div>${esc(v.summary)}${v.evidence?.length ? `<ul>${v.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}</div>` : '';
+    $('#triage').innerHTML = verdictHtml + steps + (job.status === 'running' ? '<div class="running">Agent is investigating…</div>' : '');
+  }
+  async function investigate(alertId) {
+    const r = await (await fetch('/api/triage', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: state.device, alert_id: alertId }) })).json();
+    if (r.error) return;
+    const device = state.device;
+    $('#triageCard').scrollIntoView({ block: 'nearest' });
+    for (;;) {
+      const job = await (await fetch(`/api/triage/${r.id}`)).json();
+      if (state.device !== device) return;
+      renderTriage(job);
+      if (job.status !== 'running') {
+        if (job.verdict) speak(job.verdict.summary);
+        await loadTriaged(device); if (state.graph) renderAlerts(state.graph.alerts);
+        return;
+      }
+      await new Promise((ok) => setTimeout(ok, 700));
+    }
+  }
+  // Latest stored verdict per alert on this endpoint (kept in the graph).
+  async function loadTriaged(device) {
+    try {
+      const d = await (await fetch(`/api/triage?device=${encodeURIComponent(device)}`)).json();
+      state.triaged = new Map();
+      for (const x of d.records) if (x.kind === 'Triage' && !state.triaged.has(x.alert)) state.triaged.set(x.alert, x);
+    } catch { state.triaged = new Map(); }
+  }
+
   // Spotlight one alert: its path stays vivid, everything else fades, and the
   // view zooms to the chain. Passing null restores the whole graph.
   function spotlight(a) {
@@ -607,9 +760,10 @@
       const open = openGroups.has(k);
       const div = document.createElement('div'); div.className = `panel group ${worst}`;
       div.innerHTML = `<div class="gh"><span class="badge destructive">${esc(k)}</span><span class="gt">${esc(THREATS[k] || k)}</span><span class="badge outline">${items.length}</span><span class="caret">${open ? '▾' : '▸'}</span></div>
-        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>${a.blocked === true ? 'Follow-up' : 'Recommended response'}</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}</div></li>`; }).join('')}</ul>`;
+        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}${state.triaged?.get(a.id) ? verdictBadge(state.triaged.get(a.id).verdict) : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>${a.blocked === true ? 'Follow-up' : 'Recommended response'}</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}<div class="inv"><button class="btn sm primary" data-investigate="${esc(a.id)}">${state.triaged?.get(a.id) ? 'Investigate again' : 'Investigate with agent'}</button>${state.triaged?.get(a.id) ? '<span class="dim" style="font-size:11px">last verdict below</span>' : ''}</div></div></li>`; }).join('')}</ul>`;
       div.querySelector('.gh').onclick = () => { if (openGroups.has(k)) openGroups.delete(k); else openGroups.add(k); renderAlerts(alerts); };
-      div.querySelectorAll('.items > li').forEach((el) => { el.onclick = (ev) => { if (ev.target.closest('a')) return; ev.stopPropagation(); const a = items[Number(el.dataset.i)]; const key = `${k}:${el.dataset.i}:${a.summary}`; if (openAlerts.has(key)) openAlerts.delete(key); else openAlerts.add(key); el.classList.toggle('open'); spotlight(el.classList.contains('open') ? a : null); }; });
+      div.querySelectorAll('[data-investigate]').forEach((b) => { b.onclick = (ev) => { ev.stopPropagation(); investigate(b.dataset.investigate); }; });
+      div.querySelectorAll('.items > li').forEach((el) => { el.onclick = (ev) => { if (ev.target.closest('a') || ev.target.closest('.inv')) return; ev.stopPropagation(); const a = items[Number(el.dataset.i)]; const key = `${k}:${el.dataset.i}:${a.summary}`; if (openAlerts.has(key)) openAlerts.delete(key); else openAlerts.add(key); el.classList.toggle('open'); spotlight(el.classList.contains('open') ? a : null); }; });
       box.appendChild(div);
     }
   }
