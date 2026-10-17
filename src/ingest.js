@@ -78,7 +78,7 @@ export async function ingestEvent(ev) {
        ON CREATE SET d.owner = $owner, d.first_ts = $ts, d.simulated = $simulated
      MERGE (s:Session {id: $session})
        ON CREATE SET s.agent = $agent, s.started = $ts, s.device = $device
-     SET s.state = coalesce($state, s.state), s.privileged = coalesce($priv, s.privileged), s.privileged_reason = coalesce($preason, s.privileged_reason)
+     SET s.agent = coalesce(s.agent, $agent), s.device = coalesce(s.device, $device), s.state = coalesce($state, s.state), s.privileged = coalesce($priv, s.privileged), s.privileged_reason = coalesce($preason, s.privileged_reason)
      MERGE (d)-[:RUNS]->(s)
      MERGE (a:Agent {name: $agent})
      MERGE (s)-[:RAN_BY]->(a)

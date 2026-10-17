@@ -87,6 +87,16 @@ ingest from path and host rules (`src/ingest.js`); everything else is a query.
 Rules only add alerts. Edges carry `allowed` so a refused action (dashed amber)
 is distinguishable from one that went through.
 
+## Events view (the SIEM part)
+
+The **Events** tab is a flat, searchable log of every action across every
+device: time range, device, agent, action type, outcome, and free text over
+targets, processes and command lines. Rows flag secrets, unapproved hosts and
+packages with OSV advisories; click a row to jump to that node on the device's
+graph. **Export JSON** or **Export CEF** (ArcSight-style, one line per event)
+for the current filter, so the same data can go to Splunk, Elastic, Sentinel or
+syslog. `GET /api/events` is the API behind it.
+
 ## Real data: point it at installed Ring Zero Security daemons
 
 Every machine with the Ring Zero Security daemon installed is a device on the
@@ -178,6 +188,9 @@ your allowlist.
 | `POST /api/notes` | narrative lines for a session |
 | `GET /api/feed/:device` | prompts + narrative for a device, in time order |
 | `GET /api/threats` | the threat-model catalogue |
+| `GET /api/events` | flat event log with filters; `format=cef` for CEF |
+| `GET /api/facets` | devices, agents and action types for filter bars |
+| `DELETE /api/device/:id` | remove one device and its sessions |
 | `GET /api/devices` | every device with alert counts (the wall) |
 | `GET /api/graph/device/:id` | nodes, edges and alerts for one device |
 | `GET /api/sessions` | every session with alert counts |
