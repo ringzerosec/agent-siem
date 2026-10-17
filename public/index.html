@@ -140,6 +140,14 @@
   .tbl td { padding: 7px 12px; border-bottom: 1px solid var(--border); font-family: var(--mono); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
   .tbl tr { cursor: pointer; } .tbl tbody tr:hover { background: var(--accent); }
   .tbl tr.refused td { color: var(--event-block-text); }
+  .linkbtn { border: 0; background: none; padding: 0; font: inherit; color: var(--destructive); text-decoration: underline; cursor: pointer; }
+  /* Rows on an alert path: severity rail + tint; refused rows get a teal rail (contained). */
+  .tbl td.sev, .tbl th.sev { width: 44px; padding-right: 0; }
+  .tbl tr.onpath td:first-child { box-shadow: inset 3px 0 0 var(--muted-foreground); }
+  .tbl tr.onpath.critical td { background: rgba(220,38,38,.06); } .tbl tr.onpath.critical td:first-child { box-shadow: inset 3px 0 0 #dc2626; }
+  .tbl tr.onpath.high td { background: rgba(217,119,6,.07); } .tbl tr.onpath.high td:first-child { box-shadow: inset 3px 0 0 #d97706; }
+  .tbl tr.refused:not(.onpath) td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+  .tbl tr.onpath:hover td { filter: brightness(.97); }
   .tbl td.sans { font-family: var(--sans); }
 
   /* Device detail overlay */
@@ -237,14 +245,14 @@
     <select id="fdevice" aria-label="Device"><option value="">All devices</option></select>
     <select id="fagent" aria-label="Agent"><option value="">All agents</option></select>
     <select id="fkind" aria-label="Action"><option value="">All actions</option></select>
-    <select id="foutcome" aria-label="Outcome"><option value="">Allowed + refused</option><option value="refused">Refused only</option><option value="allowed">Allowed only</option></select>
+    <select id="foutcome" aria-label="Outcome"><option value="">All outcomes</option><option value="alert">On an alert path</option><option value="refused">Refused only</option><option value="allowed">Allowed only</option></select>
     <span class="spacer"></span>
     <span class="dim" id="ecount"></span>
     <a class="btn sm" id="expJson" download="agent-siem-events.json">Export JSON</a>
     <a class="btn sm" id="expCef" download="agent-siem-events.cef">Export CEF</a>
   </div>
   <div class="card" style="margin:0 20px 14px;overflow:auto;flex:1">
-    <table class="tbl" id="etable"><thead><tr><th>Time</th><th>Device</th><th>Agent</th><th>Process</th><th>Action</th><th>Target</th><th>Outcome</th></tr></thead><tbody></tbody></table>
+    <table class="tbl" id="etable"><thead><tr><th class="sev"></th><th>Time</th><th>Device</th><th>Agent</th><th>Process</th><th>Action</th><th>Target</th><th>Outcome</th></tr></thead><tbody></tbody></table>
   </div>
 </div>
 
@@ -669,12 +677,16 @@
     const qs = eventsQS();
     $('#expJson').href = `/api/events?${qs}&limit=5000`; $('#expCef').href = `/api/events?${qs}&limit=5000&format=cef`;
     const d = await (await fetch(`/api/events?${qs}&limit=500`)).json();
-    $('#ecount').textContent = `${d.count} events${d.count >= 500 ? ' (showing newest 500)' : ''}`;
+    $('#ecount').innerHTML = `${d.count} events${d.count >= 500 ? ' (newest 500)' : ''}` +
+      (d.alertEvents && $('#foutcome').value !== 'alert' ? ` · <button class="linkbtn" id="toAlerts">${d.alertEvents} on alert paths</button>` : '');
+    $('#toAlerts')?.addEventListener('click', () => { $('#foutcome').value = 'alert'; loadEvents(); });
     const tb = $('#etable tbody'); tb.innerHTML = '';
     for (const e of d.events) {
-      const tr = document.createElement('tr'); tr.className = e.allowed ? '' : 'refused';
+      const tr = document.createElement('tr');
+      tr.className = [e.allowed ? '' : 'refused', e.alert ? 'onpath ' + e.alert.severity : ''].join(' ').trim();
+      const sevCell = e.alert ? `<td class="sev" title="${esc(e.alert.title)}"><span class="badge ${e.alert.severity === 'critical' ? 'solid' : e.alert.severity === 'high' ? 'warning' : 'outline'}">${esc(e.alert.threat)}</span></td>` : '<td class="sev"></td>';
       const flag = e.sensitive ? ' <span class="badge warning">secret</span>' : (e.targetKind === 'Host' && !e.approved) ? ' <span class="badge destructive">unapproved</span>' : e.vulns ? ` <span class="badge destructive">${e.vulns} OSV</span>` : '';
-      tr.innerHTML = `<td>${new Date(e.ts).toLocaleString()}</td><td class="sans">${esc(e.device)}${e.simulated ? ' <span class="dim">sim</span>' : ''}</td><td>${esc(e.agent || '')}</td><td>${esc(e.process)} <span class="dim">${e.pid}</span></td><td>${esc(e.action.toLowerCase())}</td><td title="${esc(e.argv || e.target)}">${esc(e.argv || e.target)}${e.port ? ':' + e.port : ''}${flag}</td><td>${e.allowed ? 'allowed' : '✗ refused' + (e.reason ? ' · ' + esc(e.reason) : '')}</td>`;
+      tr.innerHTML = sevCell + `<td>${new Date(e.ts).toLocaleString()}</td><td class="sans">${esc(e.device)}${e.simulated ? ' <span class="dim">sim</span>' : ''}</td><td>${esc(e.agent || '')}</td><td>${esc(e.process)} <span class="dim">${e.pid}</span></td><td>${esc(e.action.toLowerCase())}</td><td title="${esc(e.argv || e.target)}">${esc(e.argv || e.target)}${e.port ? ':' + e.port : ''}${flag}</td><td>${e.allowed ? 'allowed' : '✗ refused' + (e.reason ? ' · ' + esc(e.reason) : '')}</td>`;
       tr.onclick = async () => { setView('wall'); await openDevice(e.device); if (e.targetId != null) setTimeout(() => { try { state.net.selectNodes([e.processId, e.targetId]); state.net.fit({ nodes: [e.processId, e.targetId], animation: true }); selectNode(e.targetId); } catch {} }, 400); };
       tb.appendChild(tr);
     }

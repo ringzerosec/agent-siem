@@ -161,9 +161,29 @@ app.get('/api/threats', (_req, res) => res.json(THREATS));
 // SIEM view: every action as a flat, filterable event row.
 //   ?from&to&device&agent&kind=READ|WROTE|EXECUTED|CONNECTED|SENT|RESOLVED|USED_TOOL|INSTALLED|DELETED|TAMPERED
 //   &outcome=allowed|refused&q=<substring on target/process>&limit=500&format=json|cef
+// edge id -> the worst alert whose path runs through it (info findings skipped).
+// Built from the cached detection results, so it costs no rule queries.
+const SEV_RANK = { critical: 0, high: 1, medium: 2 };
+async function alertEdges(win, device) {
+  const ids = device ? [device] : ((await gr().roQuery('MATCH (d:Device) RETURN d.id AS id')).data || []).map((x) => x.id);
+  const map = new Map();
+  for (const id of ids) {
+    for (const a of await detectDevice(id, win)) {
+      if (!(a.severity in SEV_RANK)) continue;
+      for (const e of a.edges) {
+        const prev = map.get(e);
+        if (!prev || SEV_RANK[a.severity] < SEV_RANK[prev.severity]) map.set(e, { severity: a.severity, threat: a.threat, title: a.title, blocked: a.blocked });
+      }
+    }
+  }
+  return map;
+}
+
 app.get('/api/events', async (req, res, next) => {
   try {
     const { from, to } = windowOf(req.query);
+    const onPath = await alertEdges({ from, to }, req.query.device || null);
+    const pathOnly = req.query.outcome === 'alert';
     const limit = Math.min(Number(req.query.limit || 500), 5000);
     const kinds = req.query.kind ? String(req.query.kind).split(',') : null;
     const r = await gr().roQuery(
@@ -173,6 +193,7 @@ app.get('/api/events', async (req, res, next) => {
          AND ($agent IS NULL OR s.agent = $agent)
          AND ($kinds IS NULL OR type(e) IN $kinds)
          AND ($allowed IS NULL OR coalesce(e.allowed, true) = $allowed)
+         AND ($ids IS NULL OR ID(e) IN $ids)
        WITH d, s, p, e, m,
             CASE WHEN m:File THEN m.path WHEN m:Host THEN m.name WHEN m:McpTool THEN m.server + '/' + m.name
                  WHEN m:Package THEN m.ecosystem + ':' + m.name + '@' + m.version WHEN m:Tamper THEN m.what ELSE '' END AS target,
@@ -181,18 +202,29 @@ app.get('/api/events', async (req, res, next) => {
        RETURN e.ts AS ts, d.id AS device, d.simulated AS simulated, s.id AS session, s.agent AS agent, p.name AS process, p.pid AS pid,
               type(e) AS action, target, targetKind, coalesce(e.allowed, true) AS allowed, e.reason AS reason, e.argv AS argv, e.port AS port,
               coalesce(m.sensitive, false) AS sensitive, coalesce(m.approved, true) AS approved, coalesce(m.vuln_count, 0) AS vulns,
-              ID(m) AS targetId, ID(p) AS processId
+              ID(m) AS targetId, ID(p) AS processId, ID(e) AS edgeId
        ORDER BY e.ts DESC LIMIT $limit`,
-      { params: { from, to, device: req.query.device || null, agent: req.query.agent || null, kinds, allowed: req.query.outcome === 'allowed' ? true : req.query.outcome === 'refused' ? false : null, q: req.query.q || null, limit } },
+      { params: { from, to, device: req.query.device || null, agent: req.query.agent || null, kinds, allowed: req.query.outcome === 'allowed' ? true : req.query.outcome === 'refused' ? false : null, q: req.query.q || null, limit, ids: pathOnly ? [...onPath.keys()] : null } },
     );
-    const rows = r.data || [];
+    const rows = (r.data || []).map((x) => ({ ...x, alert: onPath.get(x.edgeId) || null }));
     if (req.query.format === 'cef') {
       const esc = (v) => String(v ?? '').replace(/\\/g, '\\\\').replace(/=/g, '\\=').replace(/\|/g, '\\|');
-      const lines = rows.map((x) => `CEF:0|Ring Zero Security|Agent SIEM|0.1|${x.action}|${x.action} ${x.targetKind}|${x.allowed ? 3 : 8}|rt=${x.ts} dvc=${esc(x.device)} suser=${esc(x.agent)} sproc=${esc(x.process)} spid=${x.pid} act=${x.allowed ? 'allowed' : 'refused'} fname=${esc(x.target)} reason=${esc(x.reason || '')} cs1Label=session cs1=${esc(x.session)}`);
+      const lines = rows.map((x) => `CEF:0|Ring Zero Security|Agent SIEM|0.1|${x.alert ? 'alert:' + x.alert.threat : x.action}|${x.alert ? esc(x.alert.title) : x.action + ' ' + x.targetKind}|${x.alert ? { critical: 10, high: 8, medium: 6 }[x.alert.severity] : x.allowed ? 3 : 7}|rt=${x.ts} dvc=${esc(x.device)} suser=${esc(x.agent)} sproc=${esc(x.process)} spid=${x.pid} act=${x.allowed ? 'allowed' : 'refused'} fname=${esc(x.target)} reason=${esc(x.reason || '')} cs1Label=session cs1=${esc(x.session)}${x.alert ? ` cs2Label=threat cs2=${x.alert.threat} cs3Label=severity cs3=${x.alert.severity}` : ''}`);
       res.type('text/plain').send(lines.join('\n'));
       return;
     }
-    res.json({ window: { from, to }, count: rows.length, events: rows });
+    // Same filters as the alert-path view, so the shortcut's number matches what it shows.
+    let alertEvents = 0;
+    if (onPath.size) {
+      const c = await gr().roQuery(
+        `MATCH (d:Device)-[:RUNS]->(:Session)-[:HAS]->(p:Process)-[e]->(m)
+         WHERE ID(e) IN $ids AND e.ts >= $from AND e.ts <= $to AND NOT m:Session AND ($device IS NULL OR d.id = $device)
+         RETURN count(e) AS n`,
+        { params: { ids: [...onPath.keys()], from, to, device: req.query.device || null } },
+      );
+      alertEvents = c.data?.[0]?.n || 0;
+    }
+    res.json({ window: { from, to }, count: rows.length, alertEvents, events: rows });
   } catch (e) { next(e); }
 });
 
