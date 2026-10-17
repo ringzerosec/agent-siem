@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, g, wipe } from './db.js';
 import { ingestMany, ingestMcpServers, ingestNotes } from './ingest.js';
-import { detect, detectDevice, blastRadius, THREATS } from './detect.js';
+import { detect, detectDevice, blastRadius, invalidate, THREATS } from './detect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
@@ -55,6 +55,7 @@ app.post('/api/events', async (req, res, next) => {
     const events = Array.isArray(req.body) ? req.body : [req.body];
     const sessions = await ingestMany(events);
     for (const session of sessions) {
+      invalidate(session);
       const alerts = await detect(session);
       const dr = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session {id: $session}) RETURN d.id AS id', { params: { session } });
       broadcast({ type: 'update', device: dr.data?.[0]?.id, session, alerts: alerts.length, critical: alerts.filter((a) => a.severity === 'critical').length });
@@ -174,7 +175,7 @@ app.delete('/api/device/:id', async (req, res, next) => {
 });
 
 app.post('/api/reset', async (_req, res, next) => {
-  try { await wipe(); broadcast({ type: 'reset' }); res.json({ ok: true }); } catch (e) { next(e); }
+  try { await wipe(); for (const k of [...(await import('./detect.js')).CACHE_KEYS()]) invalidate(k); broadcast({ type: 'reset' }); res.json({ ok: true }); } catch (e) { next(e); }
 });
 
 // --- reads ---------------------------------------------------------------

@@ -34,6 +34,7 @@
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { height: 100%; margin: 0; }
   body { background: var(--background); color: var(--foreground); font: 14px/1.45 var(--sans); display: grid; grid-template-rows: 56px 1fr; overflow: hidden; }
 
@@ -354,10 +355,10 @@
   // Run the physics for a bounded number of iterations, then freeze and fit.
   // Networks are created with physics off and only ever settle through here,
   // so an empty network can never "finish" stabilising before it has nodes.
-  function settle(net, iterations) {
+  function settle(net, ms) {
     net.setOptions({ physics: { enabled: true } });
-    net.once('stabilized', () => { net.setOptions({ physics: { enabled: false } }); net.fit({ animation: false }); });
-    net.stabilize(iterations);
+    clearTimeout(net.__settle);
+    net.__settle = setTimeout(() => { net.setOptions({ physics: { enabled: false } }); net.fit({ animation: false }); }, ms);
   }
 
   // ---- the wall ---------------------------------------------------------
@@ -411,7 +412,7 @@
     const have = new Set(t.nodes.getIds());
     t.nodes.update(vnodes); t.edges.update(vedges);
     for (const nid of have) if (!vnodes.find((n) => n.id === nid)) t.nodes.remove(nid);
-    if (vnodes.length !== t.had) { t.had = vnodes.length; settle(t.net, 120); }
+    if (vnodes.length !== t.had) { t.had = vnodes.length; settle(t.net, 700); }
   }
 
   // ---- device detail ----------------------------------------------------
@@ -421,7 +422,7 @@
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
-      settle(state.net, 300);
+      settle(state.net, 1500);
       state.net.on('click', (p) => { if (p.nodes.length) selectNode(p.nodes[0]); });
       state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
     } else {
@@ -430,7 +431,7 @@
       state.nodes.update(vnodes); state.edges.update(vedges);
       for (const id of have) if (!vnodes.find((n) => n.id === id)) state.nodes.remove(id);
       for (const id of state.edges.getIds()) if (!vedges.find((e) => e.id === id)) state.edges.remove(id);
-      if (grew) settle(state.net, 80);
+      if (grew) settle(state.net, 600);
     }
   }
   async function openDevice(id, keepFocus) {

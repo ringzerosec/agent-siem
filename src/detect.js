@@ -204,13 +204,29 @@ function nodeId(n) { return n.id; }
 
 // Run every rule for one session. Returns alerts with the node and edge ids
 // on the path so the UI can paint them.
+// Detection is the expensive part (14 path queries per session), so results
+// are cached per session and recomputed only when that session ingests new
+// events (see invalidate). Reads from the wall never touch the rules.
+const cache = new Map();   // session -> alerts (unwindowed)
+export function invalidate(session) { cache.delete(session); }
+export function CACHE_KEYS() { return cache.keys(); }
+
 // `win` = {from, to} in ms: keep an alert only if some edge on its path
 // happened inside the window.
 export async function detect(session, win) {
+  let all = cache.get(session);
+  if (!all) { all = await detectUncached(session); cache.set(session, all); }
+  if (!win) return all;
+  return all.filter((a) => !a.ts.length || a.ts.some((t) => t >= win.from && t <= win.to));
+}
+
+async function detectUncached(session) {
   const graph = g();
   const alerts = [];
   for (const rule of RULES) {
-    const res = await graph.roQuery(rule.cypher, { params: { session, approvedMcp: APPROVED_MCP } });
+    let res;
+    try { res = await graph.roQuery(rule.cypher, { params: { session, approvedMcp: APPROVED_MCP }, TIMEOUT: 4000 }); }
+    catch (e) { console.error(`rule ${rule.id} on ${session}: ${e.message}`); continue; }
     for (const row of res.data || []) {
       const pn = (row.pn || []).map(nodeId);
       const pr = (row.pr || []).map((e) => e.id);
@@ -220,12 +236,10 @@ export async function detect(session, win) {
         if ('labels' in v) pn.push(v.id);
         else if ('relationshipType' in v) pr.push(v.id);
       }
-      if (win) {
-        const ts = [...(row.pr || []), ...Object.values(row).filter((v) => v && typeof v === 'object' && 'relationshipType' in v)].map((e) => e.properties?.ts).filter(Boolean);
-        if (!ts.length && row.s?.properties?.started) ts.push(row.s.properties.started);   // session-level findings date from the session start
-        if (ts.length && !ts.some((t) => t >= win.from && t <= win.to)) continue;
-      }
+      const ts = [...(row.pr || []), ...Object.values(row).filter((v) => v && typeof v === 'object' && 'relationshipType' in v)].map((e) => e.properties?.ts).filter(Boolean);
+      if (!ts.length && row.s?.properties?.started) ts.push(row.s.properties.started);   // session-level findings date from the session start
       alerts.push({
+        ts,
         rule: rule.id, threat: rule.threat, threatName: THREATS[rule.threat], severity: rule.severity, title: rule.title, summary: row.summary,
         evidence: row.evidence || undefined, subject: row.subject || undefined,
         nodes: [...new Set(pn)], edges: [...new Set(pr)],
