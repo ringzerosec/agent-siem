@@ -1,4 +1,4 @@
-# Agent Watch
+# Agent SIEM
 
 A live security wall for AI coding agents across a fleet. Every employee device
 is a tile showing its own live provenance graph. Every action an agent takes on

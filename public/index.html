@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent Watch</title>
+<title>Agent SIEM</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <style>
   /* Ring Zero Security theme: the desktop app's shadcn tokens (teal #01696f
@@ -94,6 +94,18 @@
   .tile .agents { position: absolute; top: 34px; left: 12px; font-size: 10.5px; color: var(--muted-foreground); font-family: var(--mono); z-index: 2; pointer-events: none; }
   .tile .ft { position: absolute; bottom: 0; left: 0; right: 0; padding: 8px 12px; font-size: 11px; color: var(--muted-foreground); z-index: 2; pointer-events: none; background: linear-gradient(transparent, var(--card) 40%); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   #wallEmpty { grid-column: 1 / -1; display: grid; place-items: center; color: var(--muted-foreground); }
+  #events { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  #events[hidden] { display: none; }
+  .filters { display: flex; gap: 8px; align-items: center; padding: 12px 20px; flex-wrap: wrap; }
+  .filters input, .filters select { height: 32px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); font: 13px var(--sans); padding: 0 10px; }
+  .filters input { min-width: 280px; }
+  .filters input:focus, .filters select:focus { outline: 2px solid var(--ring); outline-offset: 1px; }
+  .tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .tbl th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); padding: 10px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); }
+  .tbl td { padding: 7px 12px; border-bottom: 1px solid var(--border); font-family: var(--mono); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+  .tbl tr { cursor: pointer; } .tbl tbody tr:hover { background: var(--accent); }
+  .tbl tr.refused td { color: var(--event-block-text); }
+  .tbl td.sans { font-family: var(--sans); }
 
   /* Device detail overlay */
   #detail { position: fixed; inset: 56px 0 0 0; background: var(--background); display: grid; grid-template-columns: 1fr 400px; z-index: 10; }
@@ -165,7 +177,8 @@
 </head>
 <body>
 <header>
-  <div class="brand"><div class="mark">R0</div><div><h1>Agent Watch</h1><div class="sub">Ring Zero Security</div></div></div>
+  <div class="brand"><div class="mark">R0</div><div><h1>Agent SIEM</h1><div class="sub">Ring Zero Security</div></div></div>
+  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
   <span class="spacer"></span>
@@ -181,6 +194,23 @@
 </header>
 
 <div id="wall"><div id="wallEmpty">Waiting for devices…</div></div>
+
+<div id="events" hidden>
+  <div class="filters">
+    <input id="fq" type="search" placeholder="Search target, process, command…" aria-label="Search">
+    <select id="fdevice" aria-label="Device"><option value="">All devices</option></select>
+    <select id="fagent" aria-label="Agent"><option value="">All agents</option></select>
+    <select id="fkind" aria-label="Action"><option value="">All actions</option></select>
+    <select id="foutcome" aria-label="Outcome"><option value="">Allowed + refused</option><option value="refused">Refused only</option><option value="allowed">Allowed only</option></select>
+    <span class="spacer"></span>
+    <span class="dim" id="ecount"></span>
+    <a class="btn sm" id="expJson" download="agent-siem-events.json">Export JSON</a>
+    <a class="btn sm" id="expCef" download="agent-siem-events.cef">Export CEF</a>
+  </div>
+  <div class="card" style="margin:0 20px 14px;overflow:auto;flex:1">
+    <table class="tbl" id="etable"><thead><tr><th>Time</th><th>Device</th><th>Agent</th><th>Process</th><th>Action</th><th>Target</th><th>Outcome</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
 
 <div id="detail" hidden>
   <section id="canvas">
@@ -500,7 +530,48 @@
     for (const t of state.tiles.values()) t.sig = null;
     loadWall();
     if (state.device) openDevice(state.device);
+    if (view === 'events') loadEvents();
   };
+  // ---- SIEM events view ---------------------------------------------------
+  let view = 'wall';
+  $('#view').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; setView(b.dataset.v); };
+  function setView(v) {
+    view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
+    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events';
+    if (v === 'events') loadEvents();
+  }
+  async function loadFacets() {
+    const f = await (await fetch('/api/facets')).json();
+    const fill = (sel, items) => { const cur = sel.value; sel.length = 1; for (const i of items.filter(Boolean).sort()) { const o = document.createElement('option'); o.value = i; o.textContent = i; sel.appendChild(o); } sel.value = cur; };
+    fill($('#fdevice'), f.devices); fill($('#fagent'), f.agents); fill($('#fkind'), f.actions);
+  }
+  function eventsQS() {
+    const p = new URLSearchParams(rangeQS());
+    if ($('#fq').value) p.set('q', $('#fq').value);
+    if ($('#fdevice').value) p.set('device', $('#fdevice').value);
+    if ($('#fagent').value) p.set('agent', $('#fagent').value);
+    if ($('#fkind').value) p.set('kind', $('#fkind').value);
+    if ($('#foutcome').value) p.set('outcome', $('#foutcome').value);
+    return p.toString();
+  }
+  let evTimer = null;
+  async function loadEvents() {
+    const qs = eventsQS();
+    $('#expJson').href = `/api/events?${qs}&limit=5000`; $('#expCef').href = `/api/events?${qs}&limit=5000&format=cef`;
+    const d = await (await fetch(`/api/events?${qs}&limit=500`)).json();
+    $('#ecount').textContent = `${d.count} events${d.count >= 500 ? ' (showing newest 500)' : ''}`;
+    const tb = $('#etable tbody'); tb.innerHTML = '';
+    for (const e of d.events) {
+      const tr = document.createElement('tr'); tr.className = e.allowed ? '' : 'refused';
+      const flag = e.sensitive ? ' <span class="badge warning">secret</span>' : (e.targetKind === 'Host' && !e.approved) ? ' <span class="badge destructive">unapproved</span>' : e.vulns ? ` <span class="badge destructive">${e.vulns} OSV</span>` : '';
+      tr.innerHTML = `<td>${new Date(e.ts).toLocaleString()}</td><td class="sans">${esc(e.device)}${e.simulated ? ' <span class="dim">sim</span>' : ''}</td><td>${esc(e.agent || '')}</td><td>${esc(e.process)} <span class="dim">${e.pid}</span></td><td>${esc(e.action.toLowerCase())}</td><td title="${esc(e.argv || e.target)}">${esc(e.argv || e.target)}${e.port ? ':' + e.port : ''}${flag}</td><td>${e.allowed ? 'allowed' : '✗ refused' + (e.reason ? ' · ' + esc(e.reason) : '')}</td>`;
+      tr.onclick = async () => { setView('wall'); await openDevice(e.device); if (e.targetId != null) setTimeout(() => { try { state.net.selectNodes([e.processId, e.targetId]); state.net.fit({ nodes: [e.processId, e.targetId], animation: true }); selectNode(e.targetId); } catch {} }, 400); };
+      tb.appendChild(tr);
+    }
+  }
+  for (const id of ['fq', 'fdevice', 'fagent', 'fkind', 'foutcome']) $('#' + id).addEventListener('input', () => { clearTimeout(evTimer); evTimer = setTimeout(loadEvents, 250); });
+  loadFacets(); setInterval(() => { if (view === 'events') loadEvents(); loadFacets(); }, 10000);
+
   $('#back').onclick = closeDevice;
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && state.net.fit({ animation: true });

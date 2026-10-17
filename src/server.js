@@ -107,6 +107,52 @@ app.get('/api/feed/:device', async (req, res, next) => {
 
 app.get('/api/threats', (_req, res) => res.json(THREATS));
 
+// SIEM view: every action as a flat, filterable event row.
+//   ?from&to&device&agent&kind=READ|WROTE|EXECUTED|CONNECTED|SENT|RESOLVED|USED_TOOL|INSTALLED|DELETED|TAMPERED
+//   &outcome=allowed|refused&q=<substring on target/process>&limit=500&format=json|cef
+app.get('/api/events', async (req, res, next) => {
+  try {
+    const { from, to } = windowOf(req.query);
+    const limit = Math.min(Number(req.query.limit || 500), 5000);
+    const kinds = req.query.kind ? String(req.query.kind).split(',') : null;
+    const r = await g().roQuery(
+      `MATCH (d:Device)-[:RUNS]->(s:Session)-[:HAS]->(p:Process)-[e]->(m)
+       WHERE e.ts >= $from AND e.ts <= $to AND NOT m:Session
+         AND ($device IS NULL OR d.id = $device)
+         AND ($agent IS NULL OR s.agent = $agent)
+         AND ($kinds IS NULL OR type(e) IN $kinds)
+         AND ($allowed IS NULL OR coalesce(e.allowed, true) = $allowed)
+       WITH d, s, p, e, m,
+            CASE WHEN m:File THEN m.path WHEN m:Host THEN m.name WHEN m:McpTool THEN m.server + '/' + m.name
+                 WHEN m:Package THEN m.ecosystem + ':' + m.name + '@' + m.version WHEN m:Tamper THEN m.what ELSE '' END AS target,
+            labels(m)[0] AS targetKind
+       WHERE $q IS NULL OR toLower(target) CONTAINS toLower($q) OR toLower(p.name) CONTAINS toLower($q) OR toLower(coalesce(e.argv, '')) CONTAINS toLower($q)
+       RETURN e.ts AS ts, d.id AS device, d.simulated AS simulated, s.id AS session, s.agent AS agent, p.name AS process, p.pid AS pid,
+              type(e) AS action, target, targetKind, coalesce(e.allowed, true) AS allowed, e.reason AS reason, e.argv AS argv, e.port AS port,
+              coalesce(m.sensitive, false) AS sensitive, coalesce(m.approved, true) AS approved, coalesce(m.vuln_count, 0) AS vulns,
+              ID(m) AS targetId, ID(p) AS processId
+       ORDER BY e.ts DESC LIMIT $limit`,
+      { params: { from, to, device: req.query.device || null, agent: req.query.agent || null, kinds, allowed: req.query.outcome === 'allowed' ? true : req.query.outcome === 'refused' ? false : null, q: req.query.q || null, limit } },
+    );
+    const rows = r.data || [];
+    if (req.query.format === 'cef') {
+      const esc = (v) => String(v ?? '').replace(/\\/g, '\\\\').replace(/=/g, '\\=').replace(/\|/g, '\\|');
+      const lines = rows.map((x) => `CEF:0|Ring Zero Security|Agent SIEM|0.1|${x.action}|${x.action} ${x.targetKind}|${x.allowed ? 3 : 8}|rt=${x.ts} dvc=${esc(x.device)} suser=${esc(x.agent)} sproc=${esc(x.process)} spid=${x.pid} act=${x.allowed ? 'allowed' : 'refused'} fname=${esc(x.target)} reason=${esc(x.reason || '')} cs1Label=session cs1=${esc(x.session)}`);
+      res.type('text/plain').send(lines.join('\n'));
+      return;
+    }
+    res.json({ window: { from, to }, count: rows.length, events: rows });
+  } catch (e) { next(e); }
+});
+
+// Distinct filter values for the SIEM filter bar.
+app.get('/api/facets', async (_req, res, next) => {
+  try {
+    const r = await g().roQuery('MATCH (d:Device)-[:RUNS]->(s:Session) RETURN collect(DISTINCT d.id) AS devices, collect(DISTINCT s.agent) AS agents');
+    res.json({ devices: r.data?.[0]?.devices || [], agents: r.data?.[0]?.agents || [], actions: ['READ', 'WROTE', 'DELETED', 'EXECUTED', 'CONNECTED', 'SENT', 'RESOLVED', 'USED_TOOL', 'INSTALLED', 'TAMPERED'] });
+  } catch (e) { next(e); }
+});
+
 // Remove one device and everything under it (sessions, processes, their
 // files/hosts/tools are kept if another device touched them too).
 app.delete('/api/device/:id', async (req, res, next) => {

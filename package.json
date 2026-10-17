@@ -1,5 +1,5 @@
 {
-  "name": "graph-watch",
+  "name": "agent-siem",
   "version": "0.1.0",
   "description": "",
   "main": "index.js",
