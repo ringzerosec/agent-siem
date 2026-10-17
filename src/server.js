@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { connect, g, gr, wipe } from './db.js';
 import { ingestMany, ingestMcpServers, ingestNotes, ingestSkills } from './ingest.js';
 import * as bus from './bus.js';
-import { authMiddleware, siemToken } from './auth.js';
+import { authMiddleware, adminOnly, siemToken, createJudgeLink, listJudgeLinks, revokeJudgeLink } from './auth.js';
 import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
 import { mountPepper, pepperHeadsUp } from './pepper.js';
@@ -40,9 +40,19 @@ app.use((req, res, next) => { res.setTimeout(10000, () => { if (!res.headersSent
 // In-flight request table, for diagnosing stalls: GET /api/_inflight
 const inflight = new Map(); let reqSeq = 0;
 app.use((req, res, next) => { const id = ++reqSeq; inflight.set(id, { path: req.originalUrl.slice(0, 80), at: Date.now() }); res.on('close', () => inflight.delete(id)); next(); });
-app.get('/api/_inflight', (_req, res) => res.json([...inflight.values()].map((r) => ({ ...r, ms: Date.now() - r.at })).sort((a, b) => b.ms - a.ms)));
-app.use(authMiddleware());   // one shared token for the dashboard, the API and /mcp (src/auth.js)
+app.use(authMiddleware());   // master password, judge links and the program token (src/auth.js)
+app.get('/api/_inflight', adminOnly, (_req, res) => res.json([...inflight.values()].map((r) => ({ ...r, ms: Date.now() - r.at })).sort((a, b) => b.ms - a.ms)));
 app.use(express.json({ limit: '25mb' }));
+
+// Who is signed in, and judge links (read-only demo sign-ins) for admins to hand out.
+app.get('/api/whoami', (req, res) => res.json({ role: req.role }));
+app.get('/api/judge-links', adminOnly, (_req, res) => res.json(listJudgeLinks()));
+app.post('/api/judge-links', adminOnly, (req, res) => {
+  const l = createJudgeLink({ label: req.body?.label, hours: req.body?.hours });
+  const origin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+  res.json({ ...l, url: origin + l.path });
+});
+app.post('/api/judge-links/:id/revoke', adminOnly, (req, res) => res.json({ ok: revokeJudgeLink(req.params.id) }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // --- time window ---------------------------------------------------------
@@ -181,7 +191,7 @@ mountPepper(app);
 app.post('/api/triage', (req, res) => {
   const { device, alert_id: alertId } = req.body || {};
   if (!device || !alertId) return res.status(400).json({ error: 'device and alert_id are required' });
-  const job = startTriage({ device: String(device), alertId: String(alertId) });
+  const job = startTriage({ device: String(device), alertId: String(alertId), readOnly: req.role !== 'admin' });
   res.status(202).json({ id: job.id, mode: job.mode, model: job.model });
 });
 app.get('/api/triage/:id', (req, res) => {
@@ -271,7 +281,7 @@ app.post('/api/owners', async (req, res, next) => { try { const rows = asArray(r
 // Fleet discovery and governance (src/governance.js).
 app.post('/api/scan', async (req, res, next) => { try { res.json(await startDeepScan(req.body?.devices)); } catch (e) { next(e); } });
 app.get('/api/scan/:job', async (req, res, next) => { try { res.json(await scanStatus(req.params.job)); } catch (e) { next(e); } });
-app.get('/api/commands', async (req, res, next) => { try { res.json(await pendingCommands(String(req.query.devices || '').split(',').filter(Boolean))); } catch (e) { next(e); } });
+app.get('/api/commands', adminOnly, async (req, res, next) => { try { res.json(await pendingCommands(String(req.query.devices || '').split(',').filter(Boolean))); } catch (e) { next(e); } });
 
 // --- actuator: hand queued block/contain actions to the endpoint adapter ------
 // The adapter (src/adapter-rzs.js) polls this per device, applies each action
@@ -289,7 +299,7 @@ app.get('/api/actions', async (req, res, next) => {
     res.json(r.data || []);
   } catch (e) { next(e); }
 });
-app.get('/api/actions/pending', async (req, res, next) => {
+app.get('/api/actions/pending', adminOnly, async (req, res, next) => {
   try {
     const device = String(req.query.device || '');
     const r = await gr().roQuery(
@@ -327,7 +337,7 @@ app.get('/api/inventory', async (_req, res, next) => { try { res.json(await flee
 app.post('/api/policies/propose', async (_req, res, next) => { try { res.json(await proposePolicies()); } catch (e) { next(e); } });
 app.get('/api/governance/iso42001', async (_req, res, next) => { try { res.json(await iso42001()); } catch (e) { next(e); } });
 
-app.get('/api/bus', async (_req, res, next) => {
+app.get('/api/bus', adminOnly, async (_req, res, next) => {
   try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }
 });
 
@@ -662,5 +672,5 @@ async function refreshIps() {
 await refreshIps(); setInterval(refreshIps, 10 * 60 * 1000);
 if (await bus.start()) bus.consume({ onEvents: writeEvents, onMcp: writeMcp, onNotes: writeNotes, onSkills: writeSkills });
 { const r = await gr().roQuery('MATCH (s:Session) RETURN s.id AS id ORDER BY coalesce(s.started, 0) DESC'); for (const row of r.data || []) scheduleDetect(row.id, false); }   // newest sessions first
-const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}\n  sign in: http://localhost:${PORT}/?token=${process.env.SIEM_TOKEN ? '<SIEM_TOKEN>' : siemToken()}`));
+const srv = app.listen(PORT, () => console.log(`agent-siem listening on http://localhost:${PORT}\n  sign in: http://localhost:${PORT}/ with ${process.env.SIEM_PASSWORD ? 'SIEM_PASSWORD' : 'the token in data/siem-token (set SIEM_PASSWORD for a password of your own)'}`));
 srv.keepAliveTimeout = 5000; srv.headersTimeout = 11000;

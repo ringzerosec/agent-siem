@@ -35,8 +35,8 @@ Investigate the alert you are given using the tools, then act, then submit a ver
 Be economical: 4 to 8 tool calls is typical. Before each tool call, say in one short sentence why you are calling it.`;
 
 // One linked client/server pair per run, over the real MCP protocol.
-async function connectMcp(actor) {
-  const server = createMcpServer({ actor });
+async function connectMcp(actor, readOnly = false) {
+  const server = createMcpServer({ actor, readOnly });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await server.connect(serverT);
   const client = new Client({ name: 'agent-siem-triage', version: '0.1.0' });
@@ -53,10 +53,10 @@ let seq = 0;
 export function getJob(id) { return jobs.get(id); }
 export function listJobs(device) { return [...jobs.values()].filter((j) => !device || j.device === device).slice(-20).reverse(); }
 
-export function startTriage({ device, alertId, mode }) {
+export function startTriage({ device, alertId, mode, readOnly = false }) {
   const id = `t${++seq}`;
   const useAgent = mode ? mode === 'agent' && !!process.env.ANTHROPIC_API_KEY : !!process.env.ANTHROPIC_API_KEY;
-  const job = { id, device, alertId, mode: useAgent ? 'agent' : 'playbook', model: useAgent ? MODEL : null, status: 'running', steps: [], verdict: null, actions: [], started: Date.now() };
+  const job = { id, device, alertId, mode: useAgent ? 'agent' : 'playbook', model: useAgent ? MODEL : null, status: 'running', steps: [], verdict: null, actions: [], started: Date.now(), readOnly };
   jobs.set(id, job);
   if (jobs.size > 200) jobs.delete(jobs.keys().next().value);
   run(job).catch((e) => { job.status = 'error'; job.error = e.message; job.steps.push({ kind: 'error', text: e.message, ts: Date.now() }); })
@@ -65,7 +65,7 @@ export function startTriage({ device, alertId, mode }) {
 }
 
 async function run(job) {
-  const mcp = await connectMcp(job.mode === 'agent' ? `triage-agent (${MODEL})` : 'triage-playbook');
+  const mcp = await connectMcp(job.mode === 'agent' ? `triage-agent (${MODEL})` : 'triage-playbook', job.readOnly);
   try {
     const call = async (name, args, why) => {
       const step = { kind: TOOL_KIND[name] || 'read', tool: name, args, why, ts: Date.now() };

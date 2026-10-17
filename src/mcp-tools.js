@@ -65,8 +65,16 @@ async function recordAction({ device, alertId, type, target, reason, by }) {
   return { action_id: id, type, target, status: bus.enabled() ? 'queued for the endpoint daemon on rzs.actions.' + device : 'recorded (no event bus)' };
 }
 
-export function createMcpServer({ actor = 'triage-agent' } = {}) {
+export function createMcpServer({ actor = 'triage-agent', readOnly = false } = {}) {
   const server = new McpServer({ name: 'agent-siem-graph', version: '0.1.0' });
+  // Read-only callers (a judge link's Pepper or triage run) keep every tool so
+  // the agent can still explain what it would do, but action tools refuse.
+  if (readOnly) {
+    const register = server.registerTool.bind(server);
+    server.registerTool = (name, def, fn) => register(name, def, TOOL_KIND[name] === 'action'
+      ? async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: 'read-only access: this is a demo sign-in, so nothing was changed. An admin can approve it from the inbox.' }) }] })
+      : fn);
+  }
 
   // ---- investigation (read-only) -----------------------------------------
   server.registerTool('fleet_summary', {

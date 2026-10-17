@@ -85,11 +85,17 @@ async function api(path, body) {
   return json;
 }
 
+// Demo sign-ins (judge links) can ask anything but change nothing.
+const READ_ONLY_NOTE = `
+
+This person signed in with a read-only demo link. Investigate and explain freely, and say what you would do (block, contain, email the owner), but you cannot do it for them: the action tools will refuse. When they ask you to act, say plainly that it needs an admin, and that in a live deployment you would block it once an admin says yes.`;
+
 // One graph MCP client shared by all sessions (in-process, real MCP protocol).
-let mcpPromise;
-function mcp() {
-  if (!mcpPromise) mcpPromise = (async () => {
-    const server = createMcpServer({ actor: `pepper (${BACKEND})` });
+const mcpPromises = {};
+function mcp(readOnly = false) {
+  const k = readOnly ? 'ro' : 'rw';
+  if (!mcpPromises[k]) mcpPromises[k] = (async () => {
+    const server = createMcpServer({ actor: `pepper (${BACKEND})${readOnly ? ' read-only' : ''}`, readOnly });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     await server.connect(st);
     const client = new Client({ name: 'agent-siem-pepper', version: '0.1.0' });
@@ -97,7 +103,7 @@ function mcp() {
     const { tools } = await client.listTools();
     return { client, tools: tools.filter((t) => t.name !== 'submit_verdict') };
   })();
-  return mcpPromise;
+  return mcpPromises[k];
 }
 
 // A short, speakable finding from a tool result (no ids).
@@ -131,7 +137,8 @@ const sessions = new Map();   // our id -> Session
 export const pepperConfigured = () => Boolean(KEY());
 
 class Session {
-  constructor() {
+  constructor({ readOnly = false } = {}) {
+    this.readOnly = readOnly;
     this.id = randomUUID(); this.upstream = ''; this.sink = null; this.history = [];
     this.screen = {}; this.pending = new Map(); this.rounds = new Map(); this.calls = new Set();
     this.delegations = new Set(); this.responseToDelegation = new Map(); this.closed = false; this.started = Date.now();
@@ -140,7 +147,7 @@ class Session {
   send(e) { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(e)); }
 
   async start(sdp) {
-    const { tools } = await mcp();
+    const { tools } = await mcp(this.readOnly);
     const fnTools = [
       ...SCREEN_TOOLS.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters, strict: false })),
       ...tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema, strict: false })),
@@ -150,7 +157,7 @@ class Session {
         model: 'gpt-live-1',
         instructions: FRONT,
         audio: { output: { voice: VOICE } },
-        delegation: { type: 'responses', responses: { model: BACKEND, instructions: BACK, tools: fnTools, tool_choice: 'auto', parallel_tool_calls: true, max_output_tokens: 700, ...(EFFORT ? { reasoning: { effort: EFFORT } } : {}) } },
+        delegation: { type: 'responses', responses: { model: BACKEND, instructions: this.readOnly ? BACK + READ_ONLY_NOTE : BACK, tools: fnTools, tool_choice: 'auto', parallel_tool_calls: true, max_output_tokens: 700, ...(EFFORT ? { reasoning: { effort: EFFORT } } : {}) } },
         client: { data_channel: { allowed_client_events: ['session.close'], allowed_server_events: [{ type: 'session.started' }, { type: 'session.closed' }, { type: 'error' }] } },
       },
       transport: { type: 'webrtc', sdp },
@@ -229,7 +236,7 @@ class Session {
     let args = {}; try { args = rawArgs ? JSON.parse(rawArgs) : {}; } catch { return JSON.stringify({ error: 'bad arguments' }); }
     if (name === 'get_screen') return JSON.stringify(this.screen || {});
     if (SCREEN.has(name)) { this.emit({ type: 'ui', tool: name, args }); return JSON.stringify({ ok: true, note: `The screen now shows ${name.replace(/_/g, ' ')}.` }); }
-    const { client } = await mcp();
+    const { client } = await mcp(this.readOnly);
     this.emit({ type: 'tool', tool: name, args });
     const res = await client.callTool({ name, arguments: args });
     try { this.narrate(did, finding(name, JSON.parse(res.content?.[0]?.text || '{}'))); } catch { /* narration is best effort */ }
@@ -263,7 +270,7 @@ export function mountPepper(app) {
     if (!pepperConfigured()) return res.status(503).json({ error: 'Set OPENAI_API_KEY to talk to Pepper.' });
     const sdp = String(req.body?.sdp || '');
     if (!sdp.startsWith('v=0') || sdp.length > 20000) return res.status(400).json({ error: 'bad offer' });
-    const s = new Session(); sessions.set(s.id, s);
+    const s = new Session({ readOnly: req.role !== 'admin' }); sessions.set(s.id, s);
     try { const answer = await s.start(sdp); res.json({ id: s.id, sdp: answer }); }
     catch (e) { sessions.delete(s.id); res.status(e.status && e.status < 500 ? e.status : 502).json({ error: e.message, code: e.code }); }
   });
