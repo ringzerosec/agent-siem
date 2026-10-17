@@ -49,11 +49,11 @@ class Session {
     if (r < 0.45) return [this.ev('read', this.rootPid, pick(REPO))];
     if (r < 0.6) return [this.ev('write', this.rootPid, pick(REPO))];
     if (r < 0.75) return [this.ev('connect', this.rootPid, pick(APPROVED) + ':443')];
-    if (r < 0.85) {
+    if (r < 0.84) {
       const c = this.child(pick(['cargo', 'pytest', 'node', 'git']));
       return [c.ev, this.ev('exec', c.pid, `/usr/bin/${c.ev.process} test`, { process: c.ev.process, ppid: this.rootPid, parent_process: this.agent })];
     }
-    if (r < 0.92) {
+    if (r < 0.87) {
       const c = this.child('npm');
       return [c.ev, this.ev('exec', c.pid, '/usr/bin/npm install left-pad', { process: 'npm', ppid: this.rootPid, parent_process: this.agent }), this.ev('connect', c.pid, 'registry.npmjs.org:443', { process: 'npm', ppid: this.rootPid })];
     }

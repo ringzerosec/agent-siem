@@ -189,7 +189,6 @@
       <button class="btn sm" id="fit">Fit</button>
     </div>
     <div id="graph"></div>
-    <div class="lanes"><span>agent</span><span>processes</span><span>files · hosts · tools · packages</span><span>advisories</span></div>
     <div class="legend">
       <span><i style="background:#01696f"></i>agent</span>
       <span><i style="background:#2b8a92"></i>process</span>
@@ -285,7 +284,7 @@
     for (const a of alerts) { a.nodes.forEach((id) => onPath.add(id)); a.edges.forEach((id) => onEdge.add(id)); }
     const nb = css('--node-border'), edge = css('--edge'), lab = css('--label'), labbg = css('--label-bg');
     const vnodes = nodes.map((n) => ({
-      id: n.id, level: level(n), label: mini ? undefined : label(n), shape: 'circularImage', image: icon(n),
+      id: n.id, label: mini ? undefined : label(n), shape: 'circularImage', image: icon(n),
       size: mini ? (n.labels.includes('Process') ? 9 : 7) : (n.labels.includes('Process') ? 20 : 15),
       color: onPath.has(n.id)
         ? { border: '#dc2626', background: '#dc2626', highlight: { border: '#0a0a0a', background: '#dc2626' } }
@@ -302,7 +301,21 @@
     }));
     return { vnodes, vedges };
   }
-  const LANE = (sep, spacing) => ({ physics: false, layout: { hierarchical: { enabled: true, direction: 'LR', sortMethod: 'directed', levelSeparation: sep, nodeSpacing: spacing, treeSpacing: spacing + 14, blockShifting: true, edgeMinimization: true, parentCentralization: true } }, edges: { smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.55 } } });
+  // Force layout, settled once and then frozen: the picture organises itself
+  // but never jiggles. New nodes get a short settle, then freeze again.
+  const FORCE = (mini) => ({
+    physics: { enabled: true, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: mini ? -14 : -45, springLength: mini ? 36 : 120, centralGravity: mini ? 0.03 : 0.01, damping: 0.6 }, stabilization: { enabled: true, iterations: mini ? 150 : 250, updateInterval: 50 }, minVelocity: 0.75 },
+    layout: { improvedLayout: !mini, randomSeed: 7 },
+    edges: { smooth: { type: 'continuous', roundness: 0.3 } },
+  });
+  function freezeAfterSettle(net) {
+    net.once('stabilizationIterationsDone', () => { net.setOptions({ physics: false }); net.fit({ animation: false }); });
+  }
+  function settle(net, iterations) {
+    net.setOptions({ physics: { enabled: true } });
+    net.once('stabilizationIterationsDone', () => net.setOptions({ physics: false }));
+    net.stabilize(iterations);
+  }
 
   // ---- the wall ---------------------------------------------------------
   // Only redraw tiles whose device changed; a full redraw of every tile on
@@ -321,7 +334,8 @@
         el.onclick = () => openDevice(d.id);
         wall.appendChild(el);
         const nodes = new vis.DataSet([]), edges = new vis.DataSet([]);
-        const net = new vis.Network(el.querySelector('.net'), { nodes, edges }, { ...LANE(70, 18), interaction: { dragNodes: false, dragView: false, zoomView: false, selectable: false, hover: false } });
+        const net = new vis.Network(el.querySelector('.net'), { nodes, edges }, { ...FORCE(true), interaction: { dragNodes: false, dragView: false, zoomView: false, selectable: false, hover: false } });
+        freezeAfterSettle(net);
         t = { el, net, nodes, edges, had: 0 };
         state.tiles.set(d.id, t);
       }
@@ -330,9 +344,9 @@
       t.el.classList.toggle('sim', !!d.simulated);
       t.el.querySelector('.agents').textContent = (d.agents || []).filter(Boolean).join(' · ');
       const badge = t.el.querySelector('.badge');
-      badge.className = 'badge ' + (d.critical ? 'solid' : d.high ? 'warning' : 'success');
+      badge.className = 'badge ' + (d.critical ? 'solid' : d.high ? 'warning' : d.alerts ? 'outline' : 'success');
       badge.textContent = d.alerts ? `${d.alerts} alert${d.alerts > 1 ? 's' : ''}` : 'clean';
-      const chips = Object.entries(d.threats || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<span class="badge destructive" title="${esc(THREATS[k] || k)}">${k}${n > 1 ? ' ×' + n : ''}</span>`).join('');
+      const chips = Object.entries(d.threats || {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `<span class="badge ${d.critical ? 'destructive' : d.high ? 'warning' : 'outline'}" title="${esc(THREATS[k] || k)}">${k}${n > 1 ? ' ×' + n : ''}</span>`).join('');
       t.el.querySelector('.ft').innerHTML = chips || `<span class="dim">${d.procs} proc · ${d.actions} actions · ${fmt(d.last)}</span>`;
       const cls = d.critical ? 'crit' : d.high ? 'high' : '';
       if (cls === 'crit' && !t.el.classList.contains('crit')) { t.el.style.animation = 'none'; void t.el.offsetWidth; t.el.style.animation = ''; }
@@ -352,7 +366,7 @@
     const have = new Set(t.nodes.getIds());
     t.nodes.update(vnodes); t.edges.update(vedges);
     for (const nid of have) if (!vnodes.find((n) => n.id === nid)) t.nodes.remove(nid);
-    if (vnodes.length !== t.had) { t.had = vnodes.length; t.net.fit({ animation: false }); }
+    if (vnodes.length !== t.had) { t.had = vnodes.length; settle(t.net, 40); setTimeout(() => t.net.fit({ animation: false }), 300); }
   }
 
   // ---- device detail ----------------------------------------------------
@@ -361,14 +375,17 @@
     $('#title').innerHTML = title;
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
-      state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...LANE(260, 46), interaction: { hover: true } });
+      state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
+      freezeAfterSettle(state.net);
       state.net.on('click', (p) => { if (p.nodes.length) selectNode(p.nodes[0]); });
       state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
     } else {
       const have = new Set(state.nodes.getIds());
+      const grew = vnodes.some((n) => !have.has(n.id));
       state.nodes.update(vnodes); state.edges.update(vedges);
       for (const id of have) if (!vnodes.find((n) => n.id === id)) state.nodes.remove(id);
       for (const id of state.edges.getIds()) if (!vedges.find((e) => e.id === id)) state.edges.remove(id);
+      if (grew) settle(state.net, 60);
     }
   }
   async function openDevice(id, keepFocus) {

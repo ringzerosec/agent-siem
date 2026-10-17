@@ -225,9 +225,13 @@ export async function detect(session) {
       });
     }
   }
+  // One alert per distinct finding: the same secret→host chain or the same
+  // install line must not count once per event it touched.
+  const seen = new Set();
+  const unique = alerts.filter((a) => { const k = `${a.rule}|${a.summary}`; if (seen.has(k)) return false; seen.add(k); return true; });
   const order = { critical: 0, high: 1, medium: 2 };
-  alerts.sort((a, b) => order[a.severity] - order[b.severity]);
-  return alerts;
+  unique.sort((a, b) => order[a.severity] - order[b.severity]);
+  return unique;
 }
 
 // Blast radius: everything reachable from a node within N hops, in any
