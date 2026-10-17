@@ -117,6 +117,15 @@
   .camp-graph { position: sticky; top: 0; }
   #campNet { height: min(640px, calc(100vh - 220px)); background: var(--canvas); }
   @media (max-width: 900px) { #campaigns .camp-body { grid-template-columns: 1fr; } }
+  /* AI usage */
+  #ai { padding: 16px 20px; overflow: auto; }
+  .ai-stats { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .ai-stats .stat b { font-size: 20px; }
+  #aiTable td { white-space: normal; }
+  #aiTable td.svc b { font: 600 12.5px var(--mono); display: block; }
+  #aiTable td.svc span { font-size: 11px; color: var(--muted-foreground); }
+  #aiTable tr.shadow td:first-child { box-shadow: inset 3px 0 0 #dc2626; }
+  #aiTable .unreg { color: #b91c1c; }
   /* MCP servers & skills */
   #surface { padding: 4px 0 6px; }
   #surface .sh { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); padding: 8px 14px 4px; }
@@ -301,7 +310,7 @@
 <body>
 <header>
   <div class="brand"><div class="mark">R0</div><div><h1>Agent SIEM</h1><div class="sub">Ring Zero Security</div></div></div>
-  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button><button data-v="campaigns">Campaigns</button></div>
+  <div class="seg" id="view"><button data-v="wall" class="on">Wall</button><button data-v="events">Events</button><button data-v="campaigns">Campaigns</button><button data-v="ai">AI usage</button></div>
   <span class="live" id="live"><i></i> live</span>
   <button class="btn sm" id="back" hidden>← all devices</button>
   <button class="btn sm" id="zeroBtn" title="Pepper, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Pepper</span></button>
@@ -322,6 +331,11 @@
 <div id="campaigns" hidden>
   <div class="camp-top"><div><h2>Campaigns</h2><p>Findings across endpoints that share infrastructure: the same exfil server under new names, the same skill on many laptops, the same MCP server. Grouped by FalkorDB connected components (<code>algo.WCC</code>) over findings, hosts, IPs, skills and MCP tools. A new domain on a known campaign's server is flagged on first contact.</p></div></div>
   <div class="camp-body"><div id="campList"></div><div class="camp-graph card"><div class="card-header"><h2 class="sec" id="campTitle">Select a campaign</h2></div><div id="campNet"></div></div></div>
+</div>
+<div id="ai" hidden>
+  <div class="camp-top"><div><h2>AI usage</h2><p>Every AI service the fleet talks to, recognized by what the traffic says (OpenAI, Anthropic, Gemini, Bedrock and Ollama request and response shapes: paths, body keys like <code>messages</code> and <code>max_tokens</code>, streaming), not only by hostname. That finds gateways, proxies, self-hosted models and scripts nobody registered as an agent.</p></div></div>
+  <div class="ai-stats" id="aiStats"></div>
+  <div class="card"><table class="tbl" id="aiTable"><thead><tr><th>Service</th><th>Provider</th><th>Status</th><th>Endpoints</th><th>Callers</th><th>Calls</th><th>Models</th><th>Last</th></tr></thead><tbody></tbody></table></div>
 </div>
 <div id="events" hidden>
   <div class="filters">
@@ -366,7 +380,7 @@
       <div class="endpoint" id="endpoint"></div>
     </div>
     <div class="card" id="surfaceCard">
-      <div class="card-header"><h2 class="sec">MCP servers &amp; skills <span class="dim">· what the agents can load</span></h2><span class="badge outline" id="surfaceCount">0</span></div>
+      <div class="card-header"><h2 class="sec">AI, MCP &amp; skills <span class="dim">· what the agents use and load</span></h2><span class="badge outline" id="surfaceCount">0</span></div>
       <div id="surface"></div>
     </div>
     <div class="card">
@@ -691,7 +705,7 @@
 
   // Screen tools, executed for the engineer.
   async function applyUi(tool, a) {
-    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns' }[tool] || tool;
+    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns', show_ai_usage: 'opened AI usage' }[tool] || tool;
     zLine('a', '↳ ' + label);
     try {
       switch (tool) {
@@ -718,6 +732,7 @@
           $('#fdevice').value = a.device || ''; $('#fq').value = a.query || ''; await loadEvents(); break;
         case 'set_time_range': { const r = { '24h': '24h', today: 'today', yesterday: 'yday', '7d': '7d', all: 'all' }[a.range]; document.querySelector(`#range [data-r="${r}"]`)?.click(); await new Promise((ok) => setTimeout(ok, 400)); break; }
         case 'show_campaigns': setView('campaigns'); break;
+        case 'show_ai_usage': setView('ai'); break;
         case 'run_triage': setView('wall'); if (state.device !== a.device) await openDevice(a.device); investigate(a.alert_id); break;
       }
     } catch (e) { console.warn('ui tool', tool, e); }
@@ -944,7 +959,7 @@
       const d = await (await fetch(`/api/surface/${encodeURIComponent(id)}`)).json();
       if (state.device !== id) return;
       const risky = d.mcp.filter((m) => !m.approved || m.held).length + d.skills.filter((k) => ['high', 'critical'].includes(k.risk)).length;
-      $('#surfaceCount').textContent = risky ? `${risky} risky` : `${d.mcp.length + d.skills.length}`;
+      $('#surfaceCount').textContent = risky ? `${risky} risky` : `${d.mcp.length + d.skills.length}`;   // shadow AI adds below
       $('#surfaceCount').className = 'badge ' + (risky ? 'destructive' : 'outline');
       const mcp = d.mcp.map((m) => {
         const bad = !m.approved || m.held;
@@ -957,7 +972,10 @@
         return `<div class="row ${bad ? 'bad' : warn ? 'warn' : ''}"><span class="n" title="${esc(k.path)}">${esc(k.kind)} · ${esc(String(k.path).split('/').filter(Boolean).pop())}</span><span class="badge ${bad ? 'destructive' : warn ? 'warning' : 'success'}">${esc(k.risk)}</span>
           <span class="m">${esc(k.agent)} · ${esc(k.path)}${k.findings?.length ? '<br>' + k.findings.slice(0, 2).map((f) => esc(`${f.category}: ${f.message}`)).join('<br>') : ''}</span></div>`;
       }).join('') || '<div class="empty">No skill scan from this endpoint yet.</div>';
-      $('#surface').innerHTML = `<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
+      const ai = await (await fetch(`/api/ai-usage?device=${encodeURIComponent(id)}`)).json();
+      const aiRows = ai.map((r) => `<div class="row ${r.approved ? '' : 'bad'}"><span class="n">${esc(r.host)}</span><span class="badge ${r.approved ? 'success' : 'destructive'}">${r.approved ? 'approved' : 'shadow'}</span>
+          <span class="m">${esc(r.provider)}${r.gateway ? ' · gateway' : ''} · ${r.calls} call${r.calls === 1 ? '' : 's'} · ${esc(r.processes.join(', '))}${r.unregistered.length ? ` · <b style="color:#b91c1c">unregistered: ${esc(r.unregistered.join(', '))}</b>` : ''}</span></div>`).join('') || '<div class="empty">No AI traffic seen.</div>';
+      $('#surface').innerHTML = `<div class="sh">AI services</div>${aiRows}<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
     } catch { $('#surface').innerHTML = '<div class="empty">Could not load.</div>'; }
   }
   function closeDevice() {
@@ -1059,11 +1077,26 @@
   function setView(v) {
     view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
     if (v === 'events' && state.device) closeDevice();
-    if (v === 'campaigns' && state.device) closeDevice();
-    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns';
+    if ((v === 'campaigns' || v === 'ai') && state.device) closeDevice();
+    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai';
+    if (v === 'ai') loadAi();
     if (v === 'events') loadEvents();
     if (v === 'campaigns') loadCampaigns();
   }
+  // ---- AI usage / shadow AI --------------------------------------------------
+  async function loadAi() {
+    const rows = await (await fetch('/api/ai-usage')).json();
+    const shadow = rows.filter((r) => !r.approved), unreg = [...new Set(rows.flatMap((r) => r.unregistered))];
+    $('#aiStats').innerHTML = `<div class="stat"><b>${rows.length}</b><span>AI services</span></div><div class="stat crit"><b>${shadow.length}</b><span>shadow</span></div><div class="stat high"><b>${unreg.length}</b><span>unregistered agents</span></div><div class="stat"><b>${rows.filter((r) => r.gateway).length}</b><span>gateways</span></div><div class="stat"><b>${new Set(rows.flatMap((r) => r.endpoints)).size}</b><span>endpoints using AI</span></div>`;
+    $('#aiTable tbody').innerHTML = rows.map((r) => `<tr class="${r.approved ? '' : 'shadow'}"><td class="svc"><b>${esc(r.host)}</b><span>${esc((r.signals || '').split('; ').slice(0, 3).join(' · '))}</span></td>
+      <td>${esc(r.provider)}${r.gateway ? ' <span class="badge outline">gateway</span>' : ''}${r.self_hosted ? ' <span class="badge outline">self-hosted</span>' : ''}</td>
+      <td>${r.approved ? '<span class="badge success">approved</span>' : '<span class="badge destructive">shadow</span>'}${r.blocked ? ` <span class="badge contained">${r.blocked} blocked</span>` : ''}</td>
+      <td>${r.endpoints.map((d) => `<a href="#" data-dev="${esc(d)}">${esc(d)}</a>`).join('<br>')}</td>
+      <td>${r.processes.map((p) => r.unregistered.includes(p) ? `<span class="unreg" title="not a known agent">${esc(p)} ⚠</span>` : esc(p)).join('<br>')}</td>
+      <td>${r.calls}${r.streamed ? `<br><span class="dim">${r.streamed} streamed</span>` : ''}</td><td>${esc(r.models.join(', ') || '—')}</td><td>${ago(r.last)}</td></tr>`).join('') || '<tr><td colspan="8" class="dim">No AI traffic seen yet.</td></tr>';
+    $('#aiTable').querySelectorAll('[data-dev]').forEach((a) => a.onclick = (e) => { e.preventDefault(); setView('wall'); openDevice(a.dataset.dev); });
+  }
+
   // ---- campaigns ------------------------------------------------------------
   let campData = [], campNet = null;
   async function loadCampaigns(selectId) {

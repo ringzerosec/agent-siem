@@ -46,6 +46,21 @@ const TRUSTED_MCP = [['filesystem', 'stdio', 'npx -y @modelcontextprotocol/serve
 const UNTRUSTED_MCP = [['notes-sync', 'stdio', 'npx -y notes-sync-mcp@latest', 'export_workspace'], ['web-scraper-pro', 'http', 'https://mcp.scraper-pro.dev/sse', 'fetch_and_post'], ['crypto-helper', 'stdio', 'uvx crypto-helper-mcp', 'sign_and_send']];
 const POISONED_SKILL = '/home/dev/.claude/skills/repo-insights';
 
+// AI traffic, described the way the daemon's proxy sees it (protocol shape, not
+// just the host). Approved: the agent's own provider. Shadow: per laptop.
+const AI_APPROVED = {
+  'claude-code': { host: 'api.anthropic.com', path: '/v1/messages', req_headers: ['x-api-key', 'anthropic-version'], body_keys: ['model', 'messages', 'max_tokens', 'stream', 'system', 'tools'], model: 'claude-opus-5-5', resp_keys: ['message_start', 'content_block_delta'] },
+  codex: { host: 'api.openai.com', path: '/v1/responses', req_headers: ['authorization', 'openai-organization'], body_keys: ['model', 'input', 'tools', 'stream', 'reasoning'], model: 'gpt-6-sol', resp_keys: ['usage', 'output_tokens'] },
+  'cursor-agent': { host: 'api.openai.com', path: '/v1/chat/completions', req_headers: ['authorization'], body_keys: ['model', 'messages', 'stream', 'tools', 'temperature'], model: 'gpt-6-luna', resp_keys: ['choices', 'delta'] },
+  'gemini-cli': { host: 'generativelanguage.googleapis.com', path: '/v1beta/models/gemini-3-pro:streamGenerateContent', req_headers: ['x-goog-api-key'], body_keys: ['contents', 'generationConfig', 'tools'], model: 'gemini-3-pro', resp_keys: ['candidates', 'usageMetadata'] },
+};
+const AI_SHADOW = [
+  { kind: 'openrouter', process: null, host: 'openrouter.ai', path: '/api/v1/chat/completions', req_headers: ['authorization', 'http-referer', 'x-title'], body_keys: ['model', 'messages', 'stream', 'max_tokens'], model: 'deepseek/deepseek-r1', resp_keys: ['choices', 'usage', 'prompt_tokens'] },
+  { kind: 'litellm', process: 'python3', script: 'summarize_tickets.py', host: 'llm-gw.internal.corp', path: '/v1/chat/completions', req_headers: ['authorization', 'x-stainless-lang'], body_keys: ['model', 'messages', 'stream', 'max_tokens', 'temperature'], model: 'gpt-4o-mini', accept: 'text/event-stream', resp_ct: 'text/event-stream', resp_keys: ['choices', 'delta'] },
+  { kind: 'deepseek', process: 'node', script: 'notebook-helper.js', host: 'api.deepseek.com', path: '/chat/completions', req_headers: ['authorization'], body_keys: ['model', 'messages', 'max_tokens'], model: 'deepseek-chat', resp_keys: ['choices', 'usage', 'completion_tokens'] },
+  { kind: 'ollama', process: 'python3', script: 'local_rag.py', host: 'localhost', path: '/api/chat', req_headers: [], body_keys: ['model', 'messages', 'stream'], model: 'qwen3:8b', resp_keys: ['done_reason', 'eval_count'], port: 11434 },
+];
+
 let eventSeq = 0;
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const now = () => Date.now();
@@ -69,11 +84,27 @@ class Session {
   exfil(pid, host = pick(UNAPPROVED)) {
     return { ...this.ev('connect', pid, host + ':443', { process: 'curl', ppid: this.rootPid, parent_process: this.agent, allowed: false }), reason: 'unapproved host (enforce)', ip: SIM_IP[host] };
   }
+  // One AI API call as the proxy would describe it.
+  ai(pid, spec, process) {
+    return { ...this.ev('http', pid, `${spec.host}${spec.path}`, { process: process || this.agent, ppid: process ? this.rootPid : undefined, parent_process: process ? this.agent : undefined }),
+      host: spec.host, path: spec.path, method: 'POST', port: spec.port || 443, req_headers: spec.req_headers, body_keys: spec.body_keys, model: spec.model,
+      accept: spec.accept || (spec.body_keys.includes('stream') ? 'text/event-stream' : 'application/json'), resp_content_type: spec.resp_ct || (spec.body_keys.includes('stream') ? 'text/event-stream' : 'application/json'), resp_keys: spec.resp_keys };
+  }
   child(name) {
     const pid = this.nextPid++;
     return { pid, ev: this.ev('spawn', pid, '', { process: name, ppid: this.rootPid, parent_process: this.agent }) };
   }
   normal() {
+    const r0 = Math.random();
+    // The agent talking to its own (approved) model provider.
+    if (r0 < 0.12 && AI_APPROVED[this.agent]) return [this.ai(this.rootPid, AI_APPROVED[this.agent])];
+    // Shadow AI on this laptop: a gateway, another provider, or a script nobody registered.
+    if (r0 < 0.20 && this.profile.shadow) {
+      const sh = this.profile.shadow;
+      if (!sh.process) return [this.ai(this.rootPid, sh)];
+      const c = this.child(sh.process);
+      return [c.ev, this.ev('exec', c.pid, `/usr/bin/${sh.process} ${sh.script}`, { process: sh.process, ppid: this.rootPid, parent_process: this.agent }), this.ai(c.pid, sh, sh.process)];
+    }
     const r = Math.random();
     if (r < 0.45) return [this.ev('read', this.rootPid, pick(REPO))];
     if (r < 0.6) return [this.ev('write', this.rootPid, pick(REPO))];
@@ -97,6 +128,7 @@ class Session {
     const kinds = ['secret'];
     if (this.profile.untrusted) kinds.push('mcp', 'mcp');
     if (this.profile.poisoned) kinds.push('skill', 'skill');
+    if (this.profile.shadow) kinds.push('shadow');
     const kind = pick(kinds);
     if (kind === 'mcp') {
       const [server, , , tool] = this.profile.untrusted;
@@ -106,6 +138,14 @@ class Session {
         c.ev,
         this.exfil(c.pid),
       ];
+    }
+    if (kind === 'shadow') {
+      // A secret goes to the laptop's shadow AI service (the daemon can't block it yet: it doesn't know it is AI).
+      const sh = this.profile.shadow;
+      const read = this.ev('read', this.rootPid, pick(SECRETS));
+      if (!sh.process) return [read, this.ai(this.rootPid, sh)];
+      const c = this.child(sh.process);
+      return [read, c.ev, this.ai(c.pid, sh, sh.process)];
     }
     if (kind === 'skill') {
       const c = this.child('curl');
@@ -144,7 +184,7 @@ const sessions = [];
 const profiles = [];
 for (let i = 0; i < DEVICES; i++) {
   const [device, owner] = ENDPOINTS[i % ENDPOINTS.length];
-  const profile = { device, untrusted: i % 3 === 1 ? UNTRUSTED_MCP[i % UNTRUSTED_MCP.length] : null, poisoned: i % 4 === 2 };
+  const profile = { device, untrusted: i % 3 === 1 ? UNTRUSTED_MCP[i % UNTRUSTED_MCP.length] : null, poisoned: i % 4 === 2, shadow: i % 3 === 0 ? AI_SHADOW[(i / 3) % AI_SHADOW.length] : null };
   profiles.push(profile);
   const n = 1 + (Math.random() < 0.35 ? 1 : 0);        // some devices run two agents
   for (let k = 1; k <= n; k++) sessions.push(new Session(device, owner, k, i + k, profile));

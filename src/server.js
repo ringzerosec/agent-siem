@@ -22,6 +22,7 @@ import { startTriage, getJob, listJobs } from './triage.js';
 import { createMcpServer } from './mcp-tools.js';
 import { mountPepper, pepperHeadsUp } from './pepper.js';
 import { syncFindings, campaigns, indicatorIntel, backfillResolution } from './intel.js';
+import { aiUsage } from './aiusage.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { detect, detectDevice, blastRadius, invalidate, recompute, THREATS } from './detect.js';
 
@@ -238,6 +239,10 @@ app.get('/api/surface/:device', async (req, res, next) => {
 // infrastructure) and everything known about one indicator.
 app.get('/api/campaigns', async (_req, res, next) => { try { res.json(await campaigns()); } catch (e) { next(e); } });
 app.get('/api/intel/:value', async (req, res, next) => { try { res.json(await indicatorIntel(req.params.value)); } catch (e) { next(e); } });
+
+app.get('/api/ai-usage', async (req, res, next) => {
+  try { res.json(await aiUsage(req.query.device || null, Number(req.query.from || 0))); } catch (e) { next(e); }
+});
 
 app.get('/api/bus', async (_req, res, next) => {
   try { res.json(bus.enabled() ? { mode: 'nats-jetstream', ...(await bus.stats()) } : { mode: 'direct' }); } catch (e) { next(e); }

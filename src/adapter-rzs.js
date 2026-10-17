@@ -63,6 +63,7 @@ const KIND = {
   proxy_block: 'connect', proxy_detection: 'connect', dlp_pii: 'connect',
   tamper_ptrace: 'tamper', tamper_signal: 'tamper', tamper_mount: 'tamper', tamper_umount: 'tamper',
   contained_exec_blocked: 'exec', contained_file_blocked: 'read',
+  http_request: 'http',   // request metadata from the proxy (docs/shadow-ai-daemon-spec.md)
 };
 
 function agentName(session, ev) {
@@ -88,6 +89,7 @@ function mapEvent(ev, device, owner, session) {
     out.provider = c.provider; out.model = c.model; out.tool_call = c.tool_call;
     out.flagged = ev.kind === 'offensive_prompt';
   }
+  if (kind === 'http') { const x = ev.extra || ev; Object.assign(out, { host: x.host, path: x.path, method: x.method, port: x.port, req_headers: x.req_headers, body_keys: x.body_keys, model: x.model, accept: x.accept, resp_content_type: x.resp_content_type, resp_keys: x.resp_keys }); }
   if (kind === 'tamper') out.target = ev.kind.replace('tamper_', '') + (ev.target ? ' ' + ev.target : '');
   if (kind === 'exec' && ev.extra?.argv) out.target = Array.isArray(ev.extra.argv) ? ev.extra.argv.join(' ') : String(ev.extra.argv);
   return out;

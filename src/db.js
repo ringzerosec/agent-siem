@@ -57,6 +57,7 @@ async function ensureIndexes() {
     'CREATE INDEX FOR (i:Ip) ON (i.addr)',
     'CREATE INDEX FOR (i:SharedIp) ON (i.addr)',
     'CREATE INDEX FOR (s:SkillSig) ON (s.sig)',
+    'CREATE INDEX FOR (a:AiService) ON (a.host)',
   ];
   for (const s of stmts) {
     try { await graph.query(s); } catch (e) { if (!/already indexed/i.test(e.message)) throw e; }

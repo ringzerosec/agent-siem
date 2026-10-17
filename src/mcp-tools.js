@@ -17,6 +17,7 @@ import { g, gr } from './db.js';
 import { detectDevice, blastRadius } from './detect.js';
 import * as bus from './bus.js';
 import { campaigns as listCampaignsIntel, indicatorIntel } from './intel.js';
+import { aiUsage } from './aiusage.js';
 
 const text = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 1) }] });
 const fail = (msg) => ({ content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true });
@@ -143,6 +144,15 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
     const sk = await gr().roQuery('MATCH (:Device {id: $device})-[:HAS_SKILL]->(k:Skill) RETURN k', { params: { device } });
     const skills = (sk.data || []).map((r) => { const p = r.k.properties; let f = []; try { f = JSON.parse(p.findings || '[]'); } catch {} return { id: r.k.id, agent: p.agent, kind: p.kind, path: p.path, risk: p.risk, findings: f.slice(0, 4) }; });
     return text({ device, mcp_servers: [...servers.values()], skills });
+  });
+
+  server.registerTool('ai_usage', {
+    title: 'AI usage and shadow AI',
+    description: 'Every AI service the fleet (or one endpoint) talks to, recognized by protocol fingerprint (OpenAI/Anthropic/Gemini/Bedrock/Ollama request and response shapes), not only by hostname: provider, whether it is a gateway or self-hosted, approved or shadow, which endpoints and processes call it, unregistered agents (processes that are not known agents but call AI APIs), call counts, blocked calls, models. Use for "shadow AI", "who uses which AI", "unregistered agents".',
+    inputSchema: { device: z.string().optional() },
+  }, async ({ device }) => {
+    const rows = await aiUsage(device || null, 0);
+    return text({ services: rows, shadow: rows.filter((x) => !x.approved).length, unregistered_agents: [...new Set(rows.flatMap((x) => x.unregistered))] });
   });
 
   server.registerTool('list_campaigns', {
@@ -300,7 +310,7 @@ export function createMcpServer({ actor = 'triage-agent' } = {}) {
 }
 
 export const TOOL_KIND = {
-  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
+  list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
   block_host: 'action', contain_session: 'action', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };

@@ -24,6 +24,7 @@
 import { g } from './db.js';
 import { parseInstall, lookup } from './osv.js';
 import { linkIp, enrichHost, skillSignature } from './intel.js';
+import { fingerprint, aiApproved, isKnownAgent } from './shadowai.js';
 
 const SENSITIVE = [
   /\/\.env($|\.)/, /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\/\.docker\/config\.json$/,
@@ -243,6 +244,47 @@ export async function ingestEvent(ev) {
          CREATE (p)-[:PROMPTED {ts: $ts}]->(q)`,
         { params: { key, ts, id: ev.id || '', text: redact(ev.text), provider: ev.provider || '', model: ev.model || '', tool: redact(ev.tool_call || ''), flagged: !!ev.flagged, session } },
       );
+      // The daemon recognized this provider by name: register it as an AI service too.
+      if (ev.provider) {
+        const prov = String(ev.provider); const host = { openai: 'api.openai.com', anthropic: 'api.anthropic.com', google: 'generativelanguage.googleapis.com', local: 'localhost' }[prov.toLowerCase()] || prov.toLowerCase();
+        const name = { openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', local: 'Self-hosted / internal gateway' }[prov.toLowerCase()] || prov;
+        await graph.query(
+          `MATCH (p:Process {key: $key})
+           SET p.known_agent = $knownAgent
+           MERGE (a:AiService {host: $host}) ON CREATE SET a.first_ts = $ts
+           SET a.provider = $name, a.family = $fam, a.gateway = false, a.self_hosted = $local, a.approved = $approvedAi, a.last_ts = $ts
+           CREATE (p)-[:CALLED_AI {ts: $ts, event: $id, allowed: true, path: '', model: $model, streaming: false, confidence: 1.0, signals: 'recognized by the daemon proxy'}]->(a)`,
+          { params: { key, host, name, fam: prov.toLowerCase(), local: prov.toLowerCase() === 'local', approvedAi: aiApproved(host, name), ts, id: ev.id || '', model: ev.model || '', knownAgent: isKnownAgent(ev.process || procName) } });
+      }
+      break;
+    }
+    // HTTP request metadata (from the daemon's proxy, or the simulator). The
+    // connection goes in like any other; if the protocol fingerprint says it is
+    // an AI API call, it also becomes a CALLED_AI edge to an (:AiService).
+    case 'http': {
+      const host = String(ev.host || target.split(/[/:]/)[0] || '').toLowerCase();
+      const fp = fingerprint({ host, method: ev.method, path: ev.path, content_type: ev.content_type, accept: ev.accept, req_headers: ev.req_headers, body_keys: ev.body_keys, resp_content_type: ev.resp_content_type, resp_keys: ev.resp_keys, model: ev.model });
+      await graph.query(
+        `MATCH (p:Process {key: $key})
+         MERGE (h:Host {name: $host})
+           ON CREATE SET h.approved = $approved, h.routable = $routable, h.resolved_as = $resolvedAs
+         CREATE (p)-[:CONNECTED {ts: $ts, event: $id, allowed: $allowed, port: $port, reason: $reason, path: $path}]->(h)`,
+        { params: { key, host, approved: isApprovedHost(host), routable: isRoutable(host) || /^(localhost|127\.|10\.|192\.168\.)/.test(host) || /\.(internal|corp|lan)$/.test(host), resolvedAs: approvedAs(host), ts, id: ev.id || '', allowed, port: Number(ev.port) || 443, reason: ev.reason || '', path: String(ev.path || '').slice(0, 200) } },
+      );
+      if (fp.ai) {
+        const approvedAi = aiApproved(host, fp.provider);
+        await graph.query(
+          `MATCH (p:Process {key: $key})
+           SET p.known_agent = $knownAgent
+           MERGE (a:AiService {host: $host})
+             ON CREATE SET a.first_ts = $ts
+           SET a.provider = $provider, a.family = $family, a.gateway = $gateway, a.self_hosted = $selfHosted, a.approved = $approvedAi, a.last_ts = $ts
+           CREATE (p)-[:CALLED_AI {ts: $ts, event: $id, allowed: $allowed, path: $path, model: $model, streaming: $streaming, confidence: $conf, signals: $signals}]->(a)
+           WITH a MATCH (h:Host {name: $host}) MERGE (a)-[:AT]->(h)`,
+          { params: { key, host, provider: fp.provider, family: fp.family || '', gateway: !!fp.gateway, selfHosted: !!fp.self_hosted, approvedAi, ts, id: ev.id || '', allowed, path: String(ev.path || '').slice(0, 200), model: String(ev.model || ''), streaming: !!fp.streaming, conf: Number(fp.confidence.toFixed(2)), signals: fp.signals.slice(0, 12).join('; '), knownAgent: isKnownAgent(ev.process || procName) } },
+        );
+      }
+      await intelOn(host, ev);
       break;
     }
     case 'tamper': {

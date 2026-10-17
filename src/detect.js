@@ -168,6 +168,49 @@ export const RULES = [
              p.name + ' used ' + t.server + '/' + t.name + ', then ' + c.name + ' connected to ' + h.name AS summary
       ORDER BY cn.ts DESC LIMIT 20`,
   },
+  // Shadow AI (src/shadowai.js): AI calls recognized by protocol, not hostname.
+  {
+    id: 'secret-to-shadow-ai',
+    threat: 'T2',
+    severity: 'critical',
+    title: 'Secret read, then sent to an unapproved AI service',
+    cypher: `
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(r:Process)-[rd:READ]->(f:File {sensitive: true})
+      WITH r, rd, f MATCH path = (r)-[:SPAWNED*0..3]->(c:Process)-[ca:CALLED_AI]->(a:AiService {approved: false})
+      WHERE ca.ts >= rd.ts
+      RETURN r, f, rd, c, ca, a, nodes(path) + [f, a] AS pn, relationships(path) + [rd, ca] AS pr,
+             'Read ' + f.path + ', then ' + c.name + ' called ' + a.provider + ' at ' + a.host + (CASE WHEN ca.allowed = false THEN ' (refused)' ELSE '' END) AS summary
+      ORDER BY ca.ts DESC LIMIT 10`,
+  },
+  {
+    id: 'shadow-ai',
+    threat: 'T5',
+    severity: 'high',
+    title: 'Data sent to an unapproved AI service (shadow AI)',
+    cypher: `
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(p:Process)-[ca:CALLED_AI]->(a:AiService {approved: false})
+      WITH p, a, count(ca) AS calls, collect(ca)[0] AS ca, max(ca.ts) AS last, collect(DISTINCT ca.model)[0..3] AS models
+      RETURN p, a, ca, [p, a] AS pn, [ca] AS pr,
+             p.name + ' called ' + a.provider + ' at ' + a.host + (CASE WHEN a.gateway THEN ' (gateway)' ELSE '' END) + ', ' + toString(calls) + ' call' + (CASE WHEN calls > 1 THEN 's' ELSE '' END)
+             + (CASE WHEN size([m IN models WHERE m <> '']) > 0 THEN ', model ' + [m IN models WHERE m <> ''][0] ELSE '' END) AS summary
+      ORDER BY last DESC LIMIT 10`,
+  },
+  {
+    id: 'unregistered-ai-agent',
+    threat: 'T7',
+    severity: 'high',
+    title: 'Unregistered AI agent: a process that is not a known agent is calling an AI API',
+    cypher: `
+      MATCH (s:Session {id: $session})
+      WITH s MATCH (s)-[:HAS]->(p:Process)-[ca:CALLED_AI]->(a:AiService)
+      WHERE p.known_agent = false
+      WITH p, a, count(ca) AS calls, collect(ca)[0] AS ca
+      RETURN p, a, ca, [p, a] AS pn, [ca] AS pr,
+             p.name + ' made ' + toString(calls) + ' AI call' + (CASE WHEN calls > 1 THEN 's' ELSE '' END) + ' to ' + a.provider + ' (' + a.host + '): an agent nobody registered' AS summary
+      LIMIT 10`,
+  },
   // Threat intel (src/intel.js): a host never seen in an attack, on the same
   // non-shared IP as a host from a known finding on another endpoint. Same
   // actor, new domain: flagged on first contact.
@@ -300,7 +343,7 @@ export const RESPONSE = {
   T4: 'Revoke the elevated tool or sudo grant and confirm the session owner approved it.',
   T5: 'Block the destination, check what left the endpoint, and contain the session.',
   T6: 'Compare the stated task with the actions taken and contain the session if they diverge.',
-  T7: 'Review the session timeline against the agent’s usual baseline.',
+  T7: 'Identify the owner of the process, register it as an agent with a policy, or stop it.',
   T8: 'Isolate the endpoint, remove the dropped binary, and check the daemon’s integrity.',
   T9: 'Patch the AI framework to the fixed version and review sessions that used it.',
 };
