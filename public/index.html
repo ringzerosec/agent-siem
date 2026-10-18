@@ -320,7 +320,11 @@
   .chip { background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; font-size: 12px; color: var(--muted-foreground); }
   .chip b { color: var(--foreground); font-family: var(--mono); font-weight: 500; }
   .lanes { position: absolute; top: 52px; left: 16px; right: 16px; display: grid; grid-template-columns: 1fr 1fr 2fr 1fr; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); z-index: 2; pointer-events: none; }
-  .legend { position: absolute; bottom: 12px; left: 16px; font-size: 11px; color: var(--muted-foreground); z-index: 2; max-width: calc(100% - 32px); }
+  .gctl { position: absolute; bottom: 12px; left: 16px; display: flex; gap: 8px; align-items: flex-end; z-index: 2; max-width: calc(100% - 32px); }
+  #canvas > .zoom { position: absolute; right: 16px; bottom: 12px; z-index: 2; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  #canvas > .zoom .btn { border: 0; border-radius: 0; box-shadow: none; width: 30px; height: 28px; justify-content: center; font: 600 15px var(--sans); padding: 0; }
+  #canvas > .zoom .btn + .btn { border-top: 1px solid var(--border); }
+  .legend { font-size: 11px; color: var(--muted-foreground); }
   .legend summary { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); cursor: pointer; list-style: none; font: 500 12px var(--sans); color: var(--muted-foreground); }
   .legend summary::-webkit-details-marker { display: none; }
   .legend[open] summary { margin-bottom: 6px; }
@@ -504,19 +508,25 @@
       <button class="btn sm" id="pathsOnly" title="Endpoints with alerts open on their attack paths" aria-pressed="false">Alert paths only</button>
     </div>
     <div id="graph"></div>
-    <details class="legend">
-      <summary>Legend</summary>
-      <div class="li">
-      <span><i style="background:#01696f"></i>agent</span>
-      <span><i style="background:#2b8a92"></i>process</span>
-      <span><i style="background:#9aa5b1"></i>file</span>
-      <span><i style="background:#d97706"></i>secret / privilege</span>
-      <span><i style="background:#7c3aed"></i>host</span>
-      <span><i style="background:#dc2626"></i>unapproved host · vulnerable package · CVE</span>
-      <span><i style="background:#16a34a"></i>mcp tool</span><span><i style="background:#d97706"></i>untrusted mcp</span><span><i style="background:#0f766e"></i>skill · <b style="color:#dc2626">flagged</b></span>
-      <span><i style="border:3px solid #dc2626;background:transparent;width:8px;height:8px"></i>on alert path</span>
-      </div>
-    </details>
+    <div class="zoom" role="group" aria-label="Zoom"><button class="btn sm" id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button><button class="btn sm" id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button></div>
+    <div class="gctl">
+      <details class="legend">
+        <summary>What the icons mean</summary>
+        <div class="li">
+        <span><i style="background:#01696f"></i>AI agent</span>
+        <span><i style="background:#2b8a92"></i>process (<b>×12</b> = 12 alike, double-click to open)</span>
+        <span><i style="background:#9aa5b1"></i>file</span>
+        <span><i style="background:#d97706"></i>secret or privileged file</span>
+        <span><i style="background:#7c3aed"></i>approved host · approved AI service ✦</span>
+        <span><i style="background:#dc2626"></i>unapproved host · shadow AI ✦ · vulnerable package</span>
+        <span><i style="background:#6d28d9"></i>IP address a host resolves to (shared IPs link attacks)</span>
+        <span><i style="background:#16a34a"></i>MCP tool</span><span><i style="background:#d97706"></i>untrusted MCP tool</span>
+        <span><i style="background:#0f766e"></i>skill or config (<b style="color:#dc2626">red</b> = flagged)</span>
+        <span><i style="border:3px solid #dc2626;background:transparent;width:8px;height:8px"></i>red ring and line = on an attack path</span>
+        <span><i style="border-top:2px dashed #d97706;border-radius:0;height:0;width:16px;vertical-align:3px"></i>dashed = blocked by Ring Zero Security</span>
+        </div>
+      </details>
+    </div>
   </section>
   <section class="side">
     <div class="card">
@@ -611,6 +621,7 @@
     pkg:     svg(`<path d="M32 14l16 8v18l-16 8-16-8V22z" fill="${INK}"/><path d="M32 30l16-8M32 30L16 22M32 30v18" stroke="#6b7280" stroke-width="3"/>`, '#6b7280'),
     pkgbad:  svg(`<path d="M32 14l16 8v18l-16 8-16-8V22z" fill="${INK}"/><path d="M32 30l16-8M32 30L16 22M32 30v18" stroke="#dc2626" stroke-width="3"/>`, '#dc2626'),
     vuln:    svg(`<path d="M32 12l20 36H12z" fill="${INK}"/><rect x="30" y="24" width="4" height="12" rx="2" fill="#dc2626"/><circle cx="32" cy="41" r="2.5" fill="#dc2626"/>`, '#dc2626'),
+    ip:      svg(`<rect x="17" y="21" width="30" height="22" rx="3" fill="none" stroke="${INK}" stroke-width="3"/><path d="M23 32h18M32 27v10" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>`, '#6d28d9'),
     ai:      svg(`<path d="M32 15l4.2 11.8L48 31l-11.8 4.2L32 47l-4.2-11.8L16 31l11.8-4.2z" fill="${INK}"/>`, '#7c3aed'),
     badai:   svg(`<path d="M32 15l4.2 11.8L48 31l-11.8 4.2L32 47l-4.2-11.8L16 31l11.8-4.2z" fill="${INK}"/>`, '#dc2626'),
     tamper:  svg(`<path d="M32 12l18 8v12c0 11-8 18-18 22-10-4-18-11-18-22V20z" fill="${INK}"/><path d="M26 26l12 12M38 26L26 38" stroke="#dc2626" stroke-width="4" stroke-linecap="round"/>`, '#dc2626'),
@@ -628,6 +639,7 @@
     if (n.labels.includes('McpServer')) return p.approved ? ICON.tool : ICON.badtool;
     if (n.labels.includes('Tamper')) return ICON.tamper;
     if (n.labels.includes('AiService')) return p.approved ? ICON.ai : ICON.badai;
+    if (n.labels.includes('Ip') || n.labels.includes('SharedIp')) return ICON.ip;
     return ICON.file;
   }
   function label(n) {
@@ -642,6 +654,7 @@
     if (n.labels.includes('McpServer')) return `mcp:${p.name}`;
     if (n.labels.includes('Tamper')) return p.what;
     if (n.labels.includes('AiService')) return p.provider ? `${p.provider}\n${p.host}` : p.host;
+    if (n.labels.includes('Ip') || n.labels.includes('SharedIp')) return `IP ${p.addr}`;
     return p.id || p.name || String(n.id);
   }
   function level(n) {
@@ -1767,9 +1780,14 @@
   loadFacets(); setInterval(() => { if (view === 'events') loadEvents(); loadFacets(); }, 10000);
 
   $('#back').onclick = closeDevice;
+  // Zoom around the centre of the view.
+  const zoomBy = (f) => { if (!state.net) return; state.net.moveTo({ scale: Math.min(4, Math.max(0.1, state.net.getScale() * f)), position: state.net.getViewPosition() }); };
+  $('#zoomIn').onclick = () => zoomBy(1.3); $('#zoomOut').onclick = () => zoomBy(1 / 1.3);
   $('#nodeClose').onclick = () => { $('#nodeCard').hidden = true; state.selectedNode = null; state.net?.unselectAll(); FLOW.sel = null; flowTargets(); };
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
-  $('#fit').onclick = () => state.net && fitReadable(state.net);
+  // Fit means the whole graph on screen: no readability minimum here (that
+  // clamp is for automatic fits; it made Fit zoom straight back in).
+  $('#fit').onclick = () => state.net && state.net.fit({ animation: false });
   $('#spotClear').onclick = () => { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); };
   $('#groupBtn').onclick = () => {
     state.groupProcs = state.groupProcs === false; state.expanded = new Set(); $('#groupBtn').textContent = state.groupProcs === false ? 'Group duplicates' : 'Expand all';
