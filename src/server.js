@@ -136,7 +136,7 @@ setTimeout(async () => {   // seed with what exists, then start announcing
   backfillResolution().catch((e) => console.error('intel backfill', e.message));
 }, 15000);
 
-// Autopilot finished an investigation: the decision goes to the inbox (change
+// Autopilot finished an investigation: the decision goes to Approvals (change
 // log, so an asleep Pepper can wake) and to any live Pepper session.
 onDecision((d) => {
   const say = `Analysis finished for ${d.headline} ${d.verdict_summary || ''} Proposed next step${d.proposals.length > 1 ? 's' : ''}: ${d.proposals.join('; ') || 'none'}. Ask whether to go ahead (decision ${d.id}).`;
@@ -328,8 +328,8 @@ app.get('/api/ai-usage', async (req, res, next) => {
   try { res.json(await aiUsage(req.query.device || null, Number(req.query.from || 0))); } catch (e) { next(e); }
 });
 
-// Decision inbox (autopilot): pending analyses waiting for a yes.
-app.get('/api/decisions', async (req, res, next) => { try { res.json(await listDecisions(req.query.status || null)); } catch (e) { next(e); } });
+// Approvals (autopilot decisions): pending analyses waiting for a yes.
+app.get('/api/decisions', async (req, res, next) => { try { res.json(await listDecisions(req.query.status || null, req.query.limit)); } catch (e) { next(e); } });
 app.post('/api/decisions/:id/approve', async (req, res, next) => { try { res.json(await approveDecision(req.params.id, { only: req.body?.only, actor: 'dashboard user' })); } catch (e) { next(e); } });
 app.post('/api/decisions/:id/dismiss', async (req, res, next) => { try { res.json(await dismissDecision(req.params.id, String(req.body?.reason || ''), 'dashboard user')); } catch (e) { next(e); } });
 // Who owns each endpoint (for escalations): [{device, name, email, manager, team}]

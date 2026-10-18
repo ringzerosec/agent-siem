@@ -46,7 +46,7 @@ async function findAlert(device, alertId) {
 
 // Never block this machine or the local network: loopback, private and
 // link-local addresses and .local names. (The daemon's rule compiler refuses
-// these too; refusing here keeps them out of the inbox and the action log.)
+// these too; refusing here keeps them out of Approvals and the action log.)
 export function localTarget(host) {
   const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/:\d+$/, '');
   return h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h === '0.0.0.0' || h === '::1' || h === '::'
@@ -82,7 +82,7 @@ async function recordAction({ device, alertId, type, target, reason, by }) {
 
 // propose: investigations (the triage agent and playbook) pass a callback, and
 // block_host / contain_session then record a recommendation through it and
-// change nothing. A person turns recommendations into actions in the inbox.
+// change nothing. A person turns recommendations into actions in Approvals.
 export function createMcpServer({ actor = 'triage-agent', readOnly = false, propose = null } = {}) {
   const server = new McpServer({ name: 'agent-siem-graph', version: '0.1.0' });
   // Read-only callers (a judge link's Pepper or triage run) keep every tool so
@@ -90,7 +90,7 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
   if (readOnly) {
     const register = server.registerTool.bind(server);
     server.registerTool = (name, def, fn) => register(name, def, TOOL_KIND[name] === 'action'
-      ? async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: 'read-only access: this is a demo sign-in, so nothing was changed. An admin can approve it from the inbox.' }) }] })
+      ? async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: 'read-only access: this is a demo sign-in, so nothing was changed. An admin can approve it from Approvals.' }) }] })
       : fn);
   }
 
@@ -301,7 +301,7 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
     if (localTarget(host)) return fail(`${host} is this machine or the local network; refusing to block it`);
     const hr = await gr().roQuery('MATCH (h:Host {name: $host}) RETURN h.approved AS approved', { params: { host } });
     if (hr.data?.[0]?.approved) return fail(`${host} is on the approved list; refusing to block it`);
-    if (propose) { propose({ type: 'block_host', host, device, reason, alert_id }); return text({ recommended: true, note: `Recommended blocking ${host}. A person approves it in the inbox; nothing was changed.` }); }
+    if (propose) { propose({ type: 'block_host', host, device, reason, alert_id }); return text({ recommended: true, note: `Recommended blocking ${host}. A person approves it in Approvals; nothing was changed.` }); }
     await g().query('MERGE (h:Host {name: $host}) SET h.denied = true, h.denied_reason = $reason, h.denied_at = $ts', { params: { host, reason, ts: Date.now() } });
     return text(await recordAction({ device, alertId: alert_id, type: 'block_host', target: host, reason, by: actor }));
   });
@@ -332,7 +332,7 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
     description: 'Contain one agent session: the daemon stops its process tree from making new network connections or reading secrets until a human releases it. Use when the session is still active and the graph shows intent to exfiltrate.',
     inputSchema: { device: z.string(), session: z.string(), reason: z.string(), alert_id: z.string().optional() },
   }, async ({ device, session, reason, alert_id }) => {
-    if (propose) { propose({ type: 'contain_session', device, session, reason, alert_id }); return text({ recommended: true, note: `Recommended containing session ${session}. A person approves it in the inbox; nothing was changed.` }); }
+    if (propose) { propose({ type: 'contain_session', device, session, reason, alert_id }); return text({ recommended: true, note: `Recommended containing session ${session}. A person approves it in Approvals; nothing was changed.` }); }
     await g().query('MATCH (s:Session {id: $session}) SET s.contained = true, s.contained_reason = $reason, s.contained_at = $ts', { params: { session, reason, ts: Date.now() } });
     return text(await recordAction({ device, alertId: alert_id, type: 'contain_session', target: session, reason, by: actor }));
   });
@@ -375,7 +375,7 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
 
   server.registerTool('propose_policies', {
     title: 'Propose policies',
-    description: 'Turn what the fleet inventory shows into policy proposals in the decision inbox (block unapproved AI services fleet-wide, remove untrusted MCP servers, quarantine flagged skills, register unregistered agents, turn on enforce mode). Nothing is applied until someone approves each decision.',
+    description: 'Turn what the fleet inventory shows into policy proposals in Approvals (block unapproved AI services fleet-wide, remove untrusted MCP servers, quarantine flagged skills, register unregistered agents, turn on enforce mode). Nothing is applied until someone approves each decision.',
     inputSchema: {},
   }, async () => { const { proposePolicies } = await import('./governance.js'); return text(await proposePolicies()); });
 
@@ -386,7 +386,7 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
   }, async () => { const { iso42001 } = await import('./governance.js'); return text(await iso42001()); });
 
   server.registerTool('list_decisions', {
-    title: 'Decision inbox',
+    title: 'Approvals',
     description: "Analyses autopilot finished on its own and the next steps it proposes (escalate to the employee who owns the endpoint, block a host), waiting for a yes. Pending first.",
     inputSchema: { status: z.enum(['pending', 'approved', 'dismissed']).optional() },
   }, async ({ status }) => { const { listDecisions } = await import('./autopilot.js'); return text({ decisions: (await listDecisions(status || null)).slice(0, 15).map(({ proposals, ...d }) => ({ ...d, proposals: proposals.map((p) => ({ type: p.type, label: p.label, ...(p.type === 'escalate_to_owner' ? { to: p.args.to, subject: p.args.subject } : {}) })) })) }); });

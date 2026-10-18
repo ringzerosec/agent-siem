@@ -4,8 +4,8 @@
 //   1. the triage agent investigates it (src/triage.js; it may open tickets),
 //   2. its verdict becomes a (:Decision): what happened, who owns the endpoint,
 //      and the proposed next steps (escalate to the employee, block, contain…),
-//   3. Pepper raises it out loud and the decision lands in the inbox,
-//   4. a yes (spoken, or in the inbox) executes it; a no dismisses it.
+//   3. Pepper raises it out loud and the decision lands in Approvals,
+//   4. a yes (spoken, or in Approvals) executes it; a no dismisses it.
 // Nothing with consequences runs without that yes. Every decision and what was
 // done is kept in the graph for audit.
 //
@@ -132,8 +132,8 @@ async function investigate(device, alert) {
   } catch (e) { console.error('autopilot', device, alert.id, e.message); }
 }
 
-export async function listDecisions(status) {
-  const r = await gr().roQuery(`MATCH (x:Decision) WHERE $status IS NULL OR x.status = $status RETURN x ORDER BY x.ts DESC LIMIT 50`, { params: { status: status || null } });
+export async function listDecisions(status, limit = 50) {
+  const r = await gr().roQuery(`MATCH (x:Decision) WHERE $status IS NULL OR x.status = $status RETURN x ORDER BY x.ts DESC LIMIT ${Math.min(Math.max(Number(limit) || 50, 1), 300)}`, { params: { status: status || null } });
   return (r.data || []).map((row) => { const p = row.x.properties; return { ...p, proposals: JSON.parse(p.proposals || '[]'), results: p.results ? JSON.parse(p.results) : undefined }; });
 }
 

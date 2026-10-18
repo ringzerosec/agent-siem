@@ -133,11 +133,14 @@
   .camp-graph { position: sticky; top: 0; }
   #campNet { height: min(640px, calc(100vh - 220px)); background: var(--canvas); }
   @media (max-width: 900px) { #campaigns .camp-body { grid-template-columns: 1fr; } }
-  /* Decision inbox */
-  #inbox { position: fixed; right: 16px; top: 64px; width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 84px); overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 14px 36px rgba(0,0,0,.16); z-index: 60; }
-  #inbox[hidden] { display: none; }
-  #inbox .ih { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); }
-  #inbox .ih .sp { flex: 1; } #inbox .ih .dim { font-size: 12px; }
+  /* Approvals */
+  #approvals { padding: 16px 20px; overflow: auto; }
+  #approvals .apbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  #approvals .apbar select { height: 32px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: inherit; font: 13px var(--sans); padding: 0 8px; }
+  #approvals #inboxList { max-width: 980px; }
+  #approvals .dec:last-child { border-bottom: 0; }
+  .dec .who { font-size: 11.5px; color: var(--muted-foreground); margin-top: 8px; }
+  .dec .dh .dev { font: 11px var(--mono); color: var(--muted-foreground); }
   #share { position: fixed; right: 16px; top: 64px; width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 84px); overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 14px 36px rgba(0,0,0,.16); z-index: 60; }
   #share .ih { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); }
   #share .ih .sp { flex: 1; }
@@ -403,7 +406,7 @@
   header #view { flex-direction: column; border: 0; background: transparent; gap: 2px; overflow: visible; border-radius: 0; }
   header #view button, header > .btn.sm { display: flex; align-items: center; gap: 10px; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; color: var(--muted-foreground); font: 500 13.5px var(--sans); text-align: left; cursor: pointer; }
   header #view button:hover, header > .btn.sm:hover { background: var(--accent); color: var(--foreground); }
-  header #view button.on { background: var(--teal-light); color: var(--teal); font-weight: 600; }
+  header #view button.on, header #inboxBtn.on { background: var(--teal-light); color: var(--teal); font-weight: 600; }
   header #inboxCount { margin-left: auto; }
   header #zeroBtn .zdot { margin: 0 4px; }
   header .nav-sep { height: 1px; background: var(--border); margin: 10px 6px; }
@@ -417,7 +420,7 @@
   #topbar .stat b { font-size: 14px; }
   #topbar .stat span { font-size: 12.5px; }
   #topbar #range button { height: 28px; }
-  body > #wall, body > #campaigns, body > #ai, body > #gov, body > #events { grid-column: 2; grid-row: 2; min-height: 0; min-width: 0; }
+  body > #wall, body > #campaigns, body > #ai, body > #gov, body > #events, body > #approvals { grid-column: 2; grid-row: 2; min-height: 0; min-width: 0; }
   #detail { inset: 56px 0 0 216px; }
   @media (max-width: 1180px) { #topbar .stat span { display: none; } #live { display: none; } }
   @media (max-width: 860px) {
@@ -427,7 +430,7 @@
     header #view { flex-direction: row; } header #view button span, header > .btn.sm span:not(.badge):not(.zdot) { display: none; }
     header #view button, header > .btn.sm { width: auto; }
     #topbar { grid-column: 1; grid-row: 2; padding: 0 12px; overflow-x: auto; } #topbar .stats { display: none; }
-    body > #wall, body > #campaigns, body > #ai, body > #gov, body > #events { grid-column: 1; grid-row: 3; }
+    body > #wall, body > #campaigns, body > #ai, body > #gov, body > #events, body > #approvals { grid-column: 1; grid-row: 3; }
     #detail { inset: 0; }
   }
 </style>
@@ -437,7 +440,7 @@
   <div class="brand"><div class="mark">R0</div><div><h1>Agent SIEM</h1><div class="sub">Ring Zero Security</div></div></div>
   <nav class="seg" id="view" aria-label="Views"><button data-v="wall" class="on"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Wall</span></button><button data-v="events"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Events</span></button><button data-v="campaigns"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.8 7.8 10.6 16M16.2 7.8 13.4 16M8.5 6h7"/></svg><span>Linked attacks</span></button><button data-v="ai"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 10h4v4h-4z"/></svg><span>AI usage</span></button><button data-v="gov"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span>Governance</span></button></nav>
   <div class="nav-sep"></div>
-  <button class="btn sm" id="inboxBtn" title="Alerts investigated automatically; each waits for you to approve or dismiss it"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Inbox</span> <span class="badge outline" id="inboxCount">0</span></button>
+  <button class="btn sm" id="inboxBtn" title="Alerts investigated automatically; each waits for you to approve or dismiss it"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Approvals</span> <span class="badge outline" id="inboxCount">0</span></button>
   <button class="btn sm" id="zeroBtn" title="Pepper, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Pepper</span></button>
   <span class="spacer"></span>
   <span class="badge warning" id="roBadge" hidden title="Signed in with a demo link: you can look at everything and talk to Pepper, but blocking, containing and approving need an admin">Read-only demo</span>
@@ -461,6 +464,15 @@
 
 <div id="wall"><div id="wallEmpty">Waiting for devices…</div></div>
 
+<div id="approvals" hidden>
+  <div class="camp-top"><div><h2>Approvals</h2><p>Each alert here was investigated automatically. Nothing below runs until you approve it: blocking a host, containing a session, emailing the owner, quarantining a skill, or a new policy.</p></div></div>
+  <div class="apbar">
+    <div class="seg" id="apTabs" role="tablist" aria-label="Status"><button data-st="pending" class="on">Waiting <span id="apWaiting"></span></button><button data-st="approved">Approved</button><button data-st="dismissed">Dismissed</button><button data-st="">All</button></div>
+    <select id="apType" aria-label="Type"><option value="">All kinds</option><option value="block_host">Block a host</option><option value="contain_session">Contain a session</option><option value="quarantine_skill">Quarantine a skill</option><option value="escalate_to_owner">Email the owner</option><option value="policy">Policy proposals</option></select>
+    <select id="apDev" aria-label="Endpoint"><option value="">All endpoints</option></select>
+  </div>
+  <div class="card" id="inboxList"></div>
+</div>
 <div id="campaigns" hidden>
   <div class="camp-top"><div><h2>Linked attacks</h2><p>Attacks on different laptops that share a server, a skill or an MCP server.</p><details class="how"><summary>How it's grouped</summary><p>Findings, hosts, IPs, skills and MCP tools are nodes in a FalkorDB graph; attacks connected through any of them form one group (connected components, <code>algo.WCC</code>). A server seen before is flagged on first contact, even under a new name. Shared infrastructure links attacks; it does not by itself prove one attacker.</p></details></div></div>
   <div class="card" id="playCard" style="margin-bottom:14px"><div class="card-header"><h2 class="sec">Same technique on several laptops <span class="dim">· local model: <span id="brainName">Vega</span></span></h2></div><div id="playList"></div></div>
@@ -558,10 +570,7 @@
   </section>
 </div>
 
-<section id="inbox" hidden aria-label="Decision inbox">
-  <div class="ih"><b>Inbox</b><span class="dim">investigated automatically · approve or dismiss each</span><span class="sp"></span><button class="btn sm" id="inboxClose" aria-label="Close">×</button></div>
-  <div id="inboxList"></div>
-</section>
+
 <section id="share" hidden aria-label="Share a read-only link">
   <div class="ih"><b>Share</b><span class="dim" style="font-size:12px">read-only links for judges and demos</span><span class="sp"></span><a class="btn sm" href="/logout">Sign out</a><button class="btn sm" id="shareClose" aria-label="Close">×</button></div>
   <div class="body">
@@ -1011,7 +1020,7 @@
 
   // Screen tools, executed for the engineer.
   async function applyUi(tool, a) {
-    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened campaigns', show_ai_usage: 'opened AI usage', show_inbox: 'opened the inbox', show_governance: 'opened governance' }[tool] || tool;
+    const label = { show_wall: 'back to the wall', open_endpoint: `opened ${a.device}`, focus_alert: `spotlighted an alert on ${a.device}`, highlight_nodes: 'highlighted nodes', select_node: 'selected a node', zoom_out: 'zoomed out', show_events: 'opened the event log', set_time_range: `time range: ${a.range}`, run_triage: `started the triage agent on ${a.device}`, show_campaigns: 'opened linked attacks', show_ai_usage: 'opened AI usage', show_inbox: 'opened Approvals', show_governance: 'opened governance' }[tool] || tool;
     zLine('a', '↳ ' + label);
     try {
       switch (tool) {
@@ -1039,7 +1048,7 @@
         case 'set_time_range': { const r = { '24h': '24h', today: 'today', yesterday: 'yday', '7d': '7d', all: 'all' }[a.range]; document.querySelector(`#range [data-r="${r}"]`)?.click(); await new Promise((ok) => setTimeout(ok, 400)); break; }
         case 'show_campaigns': setView('campaigns'); break;
         case 'show_ai_usage': setView('ai'); break;
-        case 'show_inbox': $('#inbox').hidden = false; loadInbox(); break;
+        case 'show_inbox': setView('approvals'); break;
         case 'show_governance': setView('gov'); break;
         case 'run_triage': setView('wall'); if (state.device !== a.device) await openDevice(a.device); investigate(a.alert_id); break;
       }
@@ -1491,20 +1500,22 @@
   // ---- SIEM events view ---------------------------------------------------
   let view = 'wall';
   $('#view').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; setView(b.dataset.v); };
-  const TITLES = { wall: 'Endpoints', events: 'Events', campaigns: 'Linked attacks', ai: 'AI usage', gov: 'Governance' };
+  const TITLES = { wall: 'Endpoints', events: 'Events', campaigns: 'Linked attacks', ai: 'AI usage', gov: 'Governance', approvals: 'Approvals' };
   function setView(v) {
     view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
     $('#pageTitle').textContent = TITLES[v] || ''; pushRoute();
     if (v === 'events' && state.device) closeDevice();
-    if ((v === 'campaigns' || v === 'ai' || v === 'gov') && state.device) closeDevice();
-    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai'; $('#gov').hidden = v !== 'gov';
+    if ((v === 'campaigns' || v === 'ai' || v === 'gov' || v === 'approvals') && state.device) closeDevice();
+    $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai'; $('#gov').hidden = v !== 'gov'; $('#approvals').hidden = v !== 'approvals';
+    $('#inboxBtn').classList.toggle('on', v === 'approvals');
+    if (v === 'approvals') { inboxSig = ''; loadInbox(); }
     if (v === 'wall') refitTiles();
     if (v === 'gov') loadGov();
     if (v === 'ai') loadAi();
     if (v === 'events') loadEvents();
     if (v === 'campaigns') loadCampaigns();
   }
-  // ---- decision inbox (autopilot) ------------------------------------------
+  // ---- Approvals (autopilot decisions) ------------------------------------------
   // ---- who is signed in; judge links (admin) ----------------------------------
   (async () => {
     try {
@@ -1519,7 +1530,7 @@
     $('#shareList').innerHTML = links.length ? links.slice().reverse().map((l) => `<div class="link"><div class="grow"><b>${esc(l.label)}</b> <span class="dim">created ${fmt(l.created)} · ${l.revoked ? 'revoked' : l.active ? 'expires ' + fmt(l.exp) : 'expired'}</span></div>${l.active ? `<span class="badge success">active</span><button class="btn sm" data-revoke="${esc(l.id)}">Revoke</button>` : '<span class="badge outline">off</span>'}</div>`).join('') : '';
     $('#shareList').querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => { b.disabled = true; await fetch(`/api/judge-links/${b.dataset.revoke}/revoke`, { method: 'POST' }); loadLinks(); });
   }
-  $('#shareBtn').onclick = () => { const p = $('#share'); p.hidden = !p.hidden; if (!p.hidden) { $('#inbox').hidden = true; loadLinks(); } };
+  $('#shareBtn').onclick = () => { const p = $('#share'); p.hidden = !p.hidden; if (!p.hidden) loadLinks(); };
   $('#shareClose').onclick = () => { $('#share').hidden = true; };
   $('#shareCreate').onclick = async () => {
     const r = await (await fetch('/api/judge-links', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label: 'Judges', hours: Number($('#shareHours').value) }) })).json();
@@ -1529,43 +1540,57 @@
   $('#shareCopy').onclick = async () => { try { await navigator.clipboard.writeText($('#shareUrl').textContent); $('#shareCopied').textContent = 'Copied'; } catch { $('#shareCopied').textContent = 'Select the link and copy it'; } };
 
   let inboxSig = '';
+  const apState = { st: 'pending', type: '', dev: '' };
+  const KIND_LABEL = { block_host: 'block', contain_session: 'contain', quarantine_skill: 'quarantine', escalate_to_owner: 'email' };
   async function loadInbox() {
-    const all = await (await fetch('/api/decisions')).json();
+    const all = await (await fetch('/api/decisions?limit=300')).json();
     const pending = all.filter((d) => d.status === 'pending');
     $('#inboxCount').textContent = pending.length; $('#inboxCount').classList.toggle('on', pending.length > 0);
-    if ($('#inbox').hidden) return;
+    $('#apWaiting').textContent = pending.length ? `(${pending.length})` : '';
+    if (view !== 'approvals') return;
+    // Endpoint filter options from what is in the list.
+    const devs = [...new Set(all.map((d) => d.device))].sort(), sel = $('#apDev');
+    if (sel.options.length - 1 !== devs.length) { const cur = sel.value; sel.length = 1; for (const d of devs) sel.add(new Option(d, d)); sel.value = cur; }
+    const isPolicy = (d) => d.verdict === 'policy proposal' || d.triage_mode === 'governance';
+    const list = all.filter((d) => (!apState.st || d.status === apState.st)
+      && (!apState.dev || d.device === apState.dev)
+      && (!apState.type || (apState.type === 'policy' ? isPolicy(d) : d.proposals.some((p) => p.type === apState.type) || (d.results || []).some((r) => r.type === apState.type))));
     // Redraw only when something changed, and keep what the reader had open
-    // (a previewed email) and where they had scrolled: the 8 s refresh used
-    // to close the email mid-read.
-    const sig = JSON.stringify(all.slice(0, 30).map((d) => [d.id, d.status, (d.results || []).length]));
+    // (a previewed email) and where they had scrolled.
+    const sig = JSON.stringify([apState, list.map((d) => [d.id, d.status, (d.results || []).length])]);
     if (sig === inboxSig && $('#inboxList').childElementCount) return;
     inboxSig = sig;
     const openMail = new Set([...document.querySelectorAll('#inboxList .dec details[open]')].map((x) => x.closest('.dec')?.dataset.id));
-    const scrollTop = $('#inbox').scrollTop;
-    const sev = (s) => `<span class="badge ${s === 'critical' ? 'solid' : 'warning'}">${esc(s)}</span>`;
-    $('#inboxList').innerHTML = all.slice(0, 30).map((d) => {
+    const scrollTop = $('#approvals').scrollTop;
+    const sev = (s) => `<span class="badge ${s === 'critical' ? 'solid' : s === 'high' ? 'warning' : 'outline'}">${esc(s)}</span>`;
+    const when = (t) => t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    $('#inboxList').innerHTML = list.slice(0, 120).map((d) => {
       const mail = d.proposals.find((p) => p.type === 'escalate_to_owner');
+      const decided = d.status !== 'pending'
+        ? `<div class="who">${d.status === 'approved' ? 'Approved' : 'Dismissed'}${d.decided_by ? ' by ' + esc(d.decided_by) : ''}${d.decided_at ? ' · ' + when(d.decided_at) : ''}${d.reason ? ' · ' + esc(d.reason) : ''}${(d.results || []).length ? ' · ' + d.results.map((r) => `${esc(KIND_LABEL[r.type] || r.type.replace(/_/g, ' '))}: ${esc(r.status || (r.ok ? 'done' : 'failed'))}`).join(', ') : ''}</div>` : '';
       return `<div class="dec ${d.status === 'pending' ? '' : 'done'}" data-id="${esc(d.id)}">
-        <div class="dh">${sev(d.severity)}<span class="dt">${esc(d.headline)}</span><span class="dim" style="font-size:11px">${ago(d.ts)}</span></div>
+        <div class="dh">${sev(d.severity)}<span class="dt">${esc(d.headline)}</span><span class="dim" style="font-size:11px" title="${esc(when(d.ts))}">${ago(d.ts)}</span></div>
         <div class="ds">${esc(d.verdict_summary || d.summary)}</div>
         ${mail ? `<details class="mail"><summary><b>${d.status === 'pending' ? 'Preview email' : 'Email'}</b> to ${esc(mail.args.to)}</summary>${mail.args.cc ? '<span class="dim">cc ' + esc(mail.args.cc) + '</span><br>' : ''}<span class="dim">${esc(mail.args.subject)}</span><pre>${esc(mail.args.body)}</pre></details>` : ''}
-        <div class="acts">${d.status === 'pending'
-          ? d.proposals.map((p) => `<button class="btn sm primary" data-approve="${esc(p.type)}">${esc(p.label)}</button>`).join('') + `<button class="btn sm" data-dismiss>Dismiss</button><button class="btn sm" data-open>Open endpoint</button>`
-          : `<span class="badge outline">${esc(d.status)}</span> ${(d.results || []).map((r) => `<span class="dim" style="font-size:11.5px">${esc(r.type.replace(/_/g, ' '))}: ${esc(r.status || (r.ok ? 'done' : 'failed'))}</span>`).join(' ')}`}</div></div>`;
-    }).join('') || '<div class="dim" style="padding:14px">Nothing waiting. New critical and high findings are investigated automatically and land here.</div>';
+        ${d.status === 'pending'
+          ? `<div class="acts">${d.proposals.map((p) => `<button class="btn sm primary" data-approve="${esc(p.type)}">${esc(p.label)}</button>`).join('')}<button class="btn sm" data-dismiss>Dismiss</button>${isPolicy(d) ? '' : '<button class="btn sm" data-open>Open endpoint</button>'}</div>`
+          : decided}</div>`;
+    }).join('') || `<div class="dim" style="padding:16px">${apState.st === 'pending' ? 'Nothing waiting. New critical and high alerts are investigated automatically and land here.' : 'Nothing here for these filters.'}</div>`;
     for (const el of document.querySelectorAll('#inboxList .dec')) if (openMail.has(el.dataset.id)) el.querySelector('details')?.setAttribute('open', '');
-    $('#inbox').scrollTop = scrollTop;
+    $('#approvals').scrollTop = scrollTop;
     $('#inboxList').querySelectorAll('.dec').forEach((el) => {
       const id = el.dataset.id;
-      el.querySelectorAll('[data-approve]').forEach((b) => b.onclick = async () => { b.disabled = true; await fetch(`/api/decisions/${id}/approve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ only: [b.dataset.approve] }) }); loadInbox(); });
-      el.querySelector('[data-dismiss]')?.addEventListener('click', async () => { await fetch(`/api/decisions/${id}/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'dismissed in the inbox' }) }); loadInbox(); });
+      el.querySelectorAll('[data-approve]').forEach((b) => b.onclick = async () => { b.disabled = true; b.textContent = 'Working…'; await fetch(`/api/decisions/${id}/approve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ only: [b.dataset.approve] }) }); loadInbox(); });
+      el.querySelector('[data-dismiss]')?.addEventListener('click', async () => { await fetch(`/api/decisions/${id}/dismiss`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'dismissed in Approvals' }) }); loadInbox(); });
       el.querySelector('[data-open]')?.addEventListener('click', () => { const d = all.find((x) => x.id === id); setView('wall'); openDevice(d.device); });
     });
   }
-  $('#inboxBtn').onclick = () => { $('#inbox').hidden = !$('#inbox').hidden; loadInbox(); };
-  $('#inboxClose').onclick = () => { $('#inbox').hidden = true; };
+  $('#inboxBtn').onclick = () => setView('approvals');
+  $('#apTabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; apState.st = b.dataset.st; for (const x of $('#apTabs').children) x.classList.toggle('on', x === b); loadInbox(); };
+  $('#apType').onchange = () => { apState.type = $('#apType').value; loadInbox(); };
+  $('#apDev').onchange = () => { apState.dev = $('#apDev').value; loadInbox(); };
   setInterval(loadInbox, 8000); loadInbox();
-  // A finished analysis: refresh the inbox and let Pepper raise it.
+  // A finished analysis: refresh Approvals and let Pepper raise it.
   function onDecisionChange(c) {
     loadInbox();
     if ($('#zero').hidden || !$('#zAlerts').checked) return;
@@ -1614,8 +1639,8 @@
   };
   $('#govPropose').onclick = async () => { const r = await (await fetch('/api/policies/propose', { method: 'POST' })).json(); const waiting = r.proposals - r.created, pl = (n) => `${n} polic${n === 1 ? 'y' : 'ies'}`;
     $('#govStatus').textContent = !r.proposals ? 'Nothing to propose: no findings call for a new policy.'
-      : r.created ? `Added ${pl(r.created)} to the inbox for approval${waiting ? `; ${waiting} more already waiting there` : ''}.`
-        : `No new proposals: all ${pl(r.proposals)} are already waiting in the inbox.`; loadInbox(); $('#inbox').hidden = false; loadInbox(); };
+      : r.created ? `Added ${pl(r.created)} to Approvals${waiting ? `; ${waiting} more already waiting there` : ''}.`
+        : `No new proposals: all ${pl(r.proposals)} are already waiting in Approvals.`; loadInbox(); };
 
   // ---- AI usage / shadow AI --------------------------------------------------
   async function loadAi() {
@@ -1833,7 +1858,7 @@
   // #/endpoint/<id>), so Back and Forward switch views in place instead of
   // reloading the app, and a view can be refreshed, bookmarked or shared.
   // Hash routes: the server needs no changes.
-  const ROUTES = { wall: '', events: 'events', campaigns: 'linked-attacks', ai: 'ai-usage', gov: 'governance' };
+  const ROUTES = { wall: '', events: 'events', campaigns: 'linked-attacks', ai: 'ai-usage', gov: 'governance', approvals: 'approvals' };
   let routing = false, routeTimer = null;
   function routeOf() { return state.device ? `#/endpoint/${encodeURIComponent(state.device)}` : `#/${ROUTES[view] ?? ''}`; }
   // One history entry per user step: a view switch that also closes an

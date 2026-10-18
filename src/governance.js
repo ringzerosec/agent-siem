@@ -8,7 +8,7 @@
 //      compliance self-assessment) and posts the results back. Simulated
 //      endpoints are scanned from what the graph already holds.
 //   2. results become a (:Posture) per endpoint plus the usual skill nodes.
-//   3. propose_policies turns what the scan found into decisions in the inbox
+//   3. propose_policies turns what the scan found into decisions in Approvals
 //      (block an unapproved AI service fleet-wide, remove an untrusted MCP
 //      server, quarantine a flagged skill, register an unregistered agent…).
 //   4. the ISO 42001 view maps the evidence to the standard's Annex A areas.
@@ -108,7 +108,7 @@ export async function fleetInventory() {
   });
 }
 
-// ---- policy proposals -> decisions in the inbox ---------------------------------
+// ---- policy proposals -> decisions in Approvals ---------------------------------
 export async function proposePolicies() {
   const inv = await fleetInventory();
   const ai = await aiUsage(null, 0);
@@ -182,7 +182,7 @@ export async function iso42001() {
       gaps: (esc.n || 0) === 0 ? ['Escalate pending decisions to the people involved.'] : [] },
     { id: 'A.9', name: 'Use of AI systems', status: status(unreg.length === 0 && (dec.pending || 0) === 0, true),
       evidence: [`Human oversight: autopilot proposes, a person approves; ${dec.pending || 0} decisions waiting.`, `${unreg.length} unregistered agents (processes calling AI APIs that are not known agents).`],
-      gaps: [...(unreg.length ? [`Register or stop: ${unreg.join(', ')}.`] : []), ...((dec.pending || 0) ? [`Decide ${dec.pending} pending item(s) in the inbox.`] : [])] },
+      gaps: [...(unreg.length ? [`Register or stop: ${unreg.join(', ')}.`] : []), ...((dec.pending || 0) ? [`Decide ${dec.pending} pending item(s) in Approvals.`] : [])] },
     { id: 'A.10', name: 'Third-party and supplier relationships', status: status((mcp.n || 0) === (mcp.approved || 0) && (sk.risky || 0) === 0 && (pk.vulnerable || 0) === 0, true),
       evidence: [`MCP servers: ${mcp.approved || 0} of ${mcp.n || 0} approved. Skills: ${sk.risky || 0} of ${sk.n || 0} flagged by the scanner. Packages: ${pk.vulnerable || 0} of ${pk.n || 0} with OSV advisories.`, `AI providers and gateways are inventoried with their approval state.`],
       gaps: [...((mcp.n || 0) - (mcp.approved || 0) > 0 ? [`Remove or approve ${(mcp.n || 0) - (mcp.approved || 0)} untrusted MCP server declaration(s).`] : []), ...((sk.risky || 0) ? [`Quarantine ${sk.risky} flagged skill surface(s).`] : [])] },
