@@ -1172,8 +1172,13 @@
     $('#triage').innerHTML = verdictHtml + steps + (job.status === 'running' ? '<div class="running">Agent is investigating…</div>' : '');
   }
   async function investigate(alertId) {
-    const r = await (await fetch('/api/triage', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: state.device, alert_id: alertId }) })).json();
-    if (r.error) return;
+    // Instant feedback: the buttons for this alert say so until the verdict lands.
+    const btns = [...document.querySelectorAll(`[data-investigate="${CSS.escape(String(alertId))}"], .rel [data-inv="${CSS.escape(String(alertId))}"]`)];
+    const busy = (on) => btns.forEach((b) => { if (on) { b.dataset.label ||= b.textContent; b.textContent = 'Investigating…'; b.disabled = true; } else if (b.isConnected) { b.textContent = b.dataset.label || 'Investigate'; b.disabled = false; } });
+    busy(true);
+    let r;
+    try { r = await (await fetch('/api/triage', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: state.device, alert_id: alertId }) })).json(); } catch { busy(false); return; }
+    if (r.error) { busy(false); return; }
     const device = state.device;
     $('#triageCard').scrollIntoView({ block: 'nearest' });
     for (;;) {
@@ -1181,6 +1186,7 @@
       if (state.device !== device) return;
       renderTriage(job);
       if (job.status !== 'running') {
+        busy(false);
         if (job.verdict) speak(job.verdict.summary);
         await loadTriaged(device); if (state.graph) renderAlerts(state.graph.alerts);
         return;
