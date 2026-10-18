@@ -38,6 +38,9 @@ const KNOWN = [
   [/(^|\.)api\.portkey\.ai$/, 'Portkey', 'openai', true],
   [/(^|\.)oai\.helicone\.ai$|(^|\.)gateway\.helicone\.ai$/, 'Helicone', 'openai', true],
 ];
+// The provider a known AI host belongs to, or null.
+export function knownAiProvider(host) { return KNOWN.find(([re]) => re.test(String(host || '').toLowerCase()))?.[1] || null; }
+
 
 // [regex, weight, family, label]
 const PATHS = [

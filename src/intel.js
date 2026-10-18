@@ -16,6 +16,7 @@
 import dns from 'node:dns';
 import { g, gr } from './db.js';
 import { classifyFinding } from './brain.js';
+import { knownAiProvider } from './shadowai.js';
 
 // Shared hosting / CDN ranges: an IP here proves nothing about who runs a site.
 const SHARED = [
@@ -30,6 +31,21 @@ export function isSharedIp(ip) {
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return true;
   const n = ipNum(ip);
   return SHARED.some(([base, bits]) => { const size = 2 ** (32 - bits); const b = ipNum(base); return n >= b && n < b + size; });
+}
+
+// Well-known services (AI providers, big clouds, code and package registries)
+// are where everyone goes. Two laptops talking to Google's Gemini API share a
+// vendor, not an attacker, so a finding links to them through USES_SERVICE,
+// which the grouping (algo.WCC over INVOLVES) does not follow, and their IPs
+// are never resolved for grouping. The finding itself still shows everywhere.
+const SERVICES = /(^|\.)(googleapis\.com|google\.com|gstatic\.com|googleusercontent\.com|amazonaws\.com|azure\.com|microsoft\.com|windows\.net|github\.com|githubusercontent\.com|npmjs\.org|npmjs\.com|pypi\.org|pythonhosted\.org|crates\.io|docker\.io|docker\.com|cloudflare\.com|apple\.com|icloud\.com)$/;
+// Local, internal and shared-CDN addresses say nothing about who is behind an
+// attack either: localhost, private ranges, .local/.internal/.corp/.lan names,
+// and a bare IP inside a CDN range.
+const LOCALISH = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.0\.0\.0$|::1$)|\.(localhost|local|internal|corp|lan)$/;
+export function isServiceHost(host) {
+  const h = String(host || '').toLowerCase();
+  return !!knownAiProvider(h) || SERVICES.test(h) || LOCALISH.test(h) || (/^\d+\.\d+\.\d+\.\d+$/.test(h) && isSharedIp(h));
 }
 
 // ---- enrichment ---------------------------------------------------------------
@@ -47,7 +63,7 @@ export async function linkIp(host, ip) {
 // Resolve unapproved domains ourselves (real hosts don't come with their IPs).
 const resolving = new Set(), resolved = new Set();
 export function enrichHost(host) {
-  if (!host || /^\d+\.\d+\.\d+\.\d+$/.test(host) || resolved.has(host) || resolving.has(host)) return;
+  if (!host || /^\d+\.\d+\.\d+\.\d+$/.test(host) || isServiceHost(host) || resolved.has(host) || resolving.has(host)) return;
   resolving.add(host);
   dns.promises.resolve4(host).then(async (ips) => { for (const ip of ips.slice(0, 4)) await linkIp(host, ip); })
     .catch(() => {}).finally(() => { resolving.delete(host); resolved.add(host); });
@@ -69,6 +85,14 @@ export async function skillSignature(device, path, kind) {
 
 // Resolve the hosts already tied to findings (startup backfill).
 export async function backfillResolution() {
+  // Re-link findings that point at well-known services (see isServiceHost) and
+  // drop those services' IPs, so existing groups stop going through them.
+  const sv = ((await gr().roQuery('MATCH (:Finding)-[:INVOLVES]->(h:Host) RETURN DISTINCT h.name AS n')).data || []).map((x) => x.n).filter(isServiceHost);
+  if (sv.length) {
+    await g().query('MATCH (f:Finding)-[r:INVOLVES]->(h:Host) WHERE h.name IN $sv MERGE (f)-[:USES_SERVICE]->(h) DELETE r', { params: { sv } });
+    await g().query('MATCH (h:Host)-[r:RESOLVES_TO]->() WHERE h.name IN $sv DELETE r', { params: { sv } });
+    console.log(`intel: ${sv.length} well-known services no longer link attacks (${sv.slice(0, 4).join(', ')}${sv.length > 4 ? ', …' : ''})`);
+  }
   const r = await gr().roQuery(`MATCH (:Finding)-[:INVOLVES]->(h:Host) WHERE NOT (h)-[:RESOLVES_TO]->() RETURN DISTINCT h.name AS n`);
   for (const row of r.data || []) enrichHost(row.n);
   // Drop signatures made by the old (too loose) rule.
@@ -84,14 +108,17 @@ export async function syncFindings(device, alerts) {
     if (synced.get(a.id) === sig) continue;
     const first = !synced.has(a.id);
     synced.set(a.id, sig);
+    const hr = await gr().roQuery('MATCH (n:Host) WHERE ID(n) IN $nodes RETURN ID(n) AS id, n.name AS name', { params: { nodes: a.nodes } });
+    const svc = (hr.data || []).filter((x) => isServiceHost(x.name)).map((x) => x.id);
     await g().query(
       `MERGE (f:Finding {id: $id})
        SET f.device = $device, f.rule = $rule, f.threat = $threat, f.severity = $severity, f.blocked = $blocked,
            f.title = $title, f.summary = $summary, f.ts = $ts
-       WITH f MATCH (n) WHERE ID(n) IN $nodes AND (n:Host OR n:McpTool OR n:Skill)
+       WITH f MATCH (n) WHERE ID(n) IN $nodes AND NOT ID(n) IN $svc AND (n:Host OR n:McpTool OR n:Skill)
          AND NOT (n:Host AND coalesce(n.approved, false))
        MERGE (f)-[:INVOLVES]->(n)`,
-      { params: { id: a.id, device, rule: a.rule, threat: a.threat, severity: a.severity, blocked: a.blocked ?? null, title: a.title, summary: String(a.summary || '').slice(0, 300), ts: Math.min(...(a.ts?.length ? a.ts : [Date.now()])), nodes: a.nodes } });
+      { params: { id: a.id, device, rule: a.rule, threat: a.threat, severity: a.severity, blocked: a.blocked ?? null, title: a.title, summary: String(a.summary || '').slice(0, 300), ts: Math.min(...(a.ts?.length ? a.ts : [Date.now()])), nodes: a.nodes, svc } });
+    if (svc.length) await g().query('MATCH (f:Finding {id: $id}) MATCH (n:Host) WHERE ID(n) IN $svc MERGE (f)-[:USES_SERVICE]->(n)', { params: { id: a.id, svc } });
     if (first) {
       const done = await gr().roQuery('MATCH (f:Finding {id: $id}) RETURN f.technique IS NOT NULL AS has', { params: { id: a.id } });
       if (!done.data?.[0]?.has) queueClassify({ id: a.id, title: a.title, summary: a.summary, severity: a.severity, blocked: a.blocked, threat: a.threat });
@@ -163,7 +190,7 @@ export async function campaigns() {
     const hosts = xs.filter((x) => x.labels.includes('Host')).map((x) => x.properties.name);
     const tools = xs.filter((x) => x.labels.includes('McpTool')).map((x) => `${x.properties.server}/${x.properties.name}`);
     const skills = [...new Set([...(ir.data?.[0]?.sigs || [])])];
-    if (fs.length < 2 && devices.length < 2) continue;   // a lone finding is not a campaign
+    if (devices.length < 2) continue;   // linked means at least two laptops
     const blocked = fs.filter((f) => f.blocked === true).length;
     const worst = fs.some((f) => f.severity === 'critical') ? 'critical' : fs.some((f) => f.severity === 'high') ? 'high' : 'medium';
     const name = hosts.length ? `${hosts.slice(0, 2).join(' / ')} infrastructure` : skills.length ? `“${skills[0]}” skill` : tools.length ? `${tools[0].split('/')[0]} MCP server` : 'linked activity';

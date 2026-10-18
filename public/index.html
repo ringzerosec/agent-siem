@@ -120,6 +120,10 @@
   .camp .eps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
   .camp .eps button { font: 11px var(--mono); border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
   .camp .eps button:hover { border-color: var(--primary); }
+  .camp .cta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .camp .cta .ctamsg { font-size: 11.5px; }
+  .btn.primary.danger { background: var(--destructive); border-color: var(--destructive); }
+  body.readonly [data-block] { display: none !important; }
   .camp-graph { position: sticky; top: 0; }
   #campNet { height: min(640px, calc(100vh - 220px)); background: var(--canvas); }
   @media (max-width: 900px) { #campaigns .camp-body { grid-template-columns: 1fr; } }
@@ -1389,15 +1393,44 @@
       <div class="ch">${sevBadge(c.severity)}<span class="cn">${esc(c.name)}</span><span class="badge outline">${c.endpoints.length} endpoint${c.endpoints.length > 1 ? 's' : ''}</span></div>
       <div class="cm">${c.findings} findings · ${c.blocked} blocked · ${esc(c.threats.join(' '))} · last ${ago(c.last)}</div>
       <div class="ci">${c.indicators.hosts.slice(0, 4).map((h) => `<span>${esc(h)}</span>`).join('')}${c.indicators.hosts.length > 4 ? `<span title="${esc(c.indicators.hosts.slice(4).join(', '))}">+${c.indicators.hosts.length - 4} hosts</span>` : ''}${c.indicators.ips.length ? `<span class="ip" title="${esc(c.indicators.ips.join(', '))}">${c.indicators.ips.length} IP${c.indicators.ips.length > 1 ? 's' : ''}</span>` : ''}${c.indicators.skills.map((h) => `<span class="sk">skill: ${esc(h)}</span>`).join('')}${c.indicators.mcp_tools.map((h) => `<span class="sk">mcp: ${esc(h)}</span>`).join('')}</div>
-      <div class="eps">${c.endpoints.slice(0, 4).map((d) => `<button data-dev="${esc(d)}">${esc(d)}</button>`).join('')}${c.endpoints.length > 4 ? `<span class="dim" style="font-size:11px;align-self:center" title="${esc(c.endpoints.slice(4).join(', '))}">+${c.endpoints.length - 4} more</span>` : ''}</div></div>`).join('')
+      <div class="eps">${c.endpoints.slice(0, 4).map((d) => `<button data-dev="${esc(d)}">${esc(d)}</button>`).join('')}${c.endpoints.length > 4 ? `<span class="dim" style="font-size:11px;align-self:center" title="${esc(c.endpoints.slice(4).join(', '))}">+${c.endpoints.length - 4} more</span>` : ''}</div>
+      <div class="cta">${c.indicators.hosts.length ? `<button class="btn sm primary" data-block="${esc(c.id)}" data-n="${c.indicators.hosts.length}">Block ${c.indicators.hosts.length} host${c.indicators.hosts.length > 1 ? 's' : ''} on every endpoint</button>` : ''}<button class="btn sm" data-inv="${esc(c.id)}">Investigate</button><span class="ctamsg dim"></span></div></div>`).join('')
       : '<div class="dim" style="padding:12px">Nothing linked yet: attacks on different laptops appear here once they share a server, skill or MCP server.</div>';
-    $('#campList').querySelectorAll('.camp').forEach((el) => el.onclick = (e) => {
+    $('#campList').querySelectorAll('.camp').forEach((el) => el.onclick = async (e) => {
+      const blk = e.target.closest('[data-block]'), inv = e.target.closest('[data-inv]');
+      if (blk) return blockLinked(blk, el);
+      if (inv) return investigateLinked(inv.dataset.inv);
       const dev = e.target.closest('[data-dev]')?.dataset.dev;
       if (dev) { setView('wall'); openDevice(dev); return; }
       showCampaign(el.dataset.id);
     });
     const pick = selectId || $('#campList .camp.on')?.dataset.id || campData[0]?.id;
     if (pick) showCampaign(pick);
+  }
+  // Block a linked attack's hosts everywhere: first click arms, second click
+  // (within 6 s) does it. No browser dialog.
+  async function blockLinked(btn, card) {
+    const msg = card.querySelector('.ctamsg'), n = Number(btn.dataset.n);
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1'; btn.textContent = `Confirm: block ${n} host${n > 1 ? 's' : ''} everywhere`; btn.classList.add('danger');
+      clearTimeout(btn.__t); btn.__t = setTimeout(() => { delete btn.dataset.armed; btn.classList.remove('danger'); btn.textContent = `Block ${n} host${n > 1 ? 's' : ''} on every endpoint`; }, 6000);
+      return;
+    }
+    clearTimeout(btn.__t); btn.disabled = true; btn.textContent = 'Blocking…';
+    try {
+      const r = await (await fetch(`/api/campaigns/${encodeURIComponent(btn.dataset.block)}/block`, { method: 'POST' })).json();
+      if (r.error) throw new Error(r.error);
+      btn.textContent = `Blocked ${r.blocked.length} host${r.blocked.length === 1 ? '' : 's'} everywhere`; btn.classList.remove('danger');
+      const real = r.real_endpoints.length;
+      msg.textContent = [real ? `applying on ${real} real endpoint${real > 1 ? 's' : ''}` : 'no real endpoints to apply on (all simulated)', r.skipped ? `${r.skipped} well-known or local host${r.skipped > 1 ? 's' : ''} skipped` : '', r.refused.length ? `${r.refused.length} refused` : ''].filter(Boolean).join(' · ');
+      msg.title = r.refused.join('\n');
+    } catch (e) { btn.disabled = false; delete btn.dataset.armed; btn.textContent = 'Block failed, try again'; msg.textContent = e.message; }
+  }
+  // Open the laptop with the group's latest finding and start the triage agent on it.
+  async function investigateLinked(id) {
+    const c = campData.find((x) => x.id === id); if (!c) return;
+    const f = c.devices_findings.find((x) => x.severity === 'critical') || c.devices_findings[0]; if (!f) return;
+    setView('wall'); await openDevice(f.device); investigate(f.id);
   }
   // A campaign as a graph: endpoints -> findings -> shared infrastructure.
   function showCampaign(id) {

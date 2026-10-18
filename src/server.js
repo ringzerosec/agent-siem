@@ -19,9 +19,11 @@ import { ingestMany, ingestMcpServers, ingestNotes, ingestSkills } from './inges
 import * as bus from './bus.js';
 import { authMiddleware, adminOnly, siemToken, createJudgeLink, listJudgeLinks, revokeJudgeLink } from './auth.js';
 import { startTriage, getJob, listJobs } from './triage.js';
-import { createMcpServer } from './mcp-tools.js';
+import { createMcpServer, localTarget } from './mcp-tools.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { mountPepper, pepperHeadsUp } from './pepper.js';
-import { syncFindings, campaigns, indicatorIntel, backfillResolution, playbooks } from './intel.js';
+import { syncFindings, campaigns, indicatorIntel, backfillResolution, playbooks, isServiceHost } from './intel.js';
 import { brainHealth } from './brain.js';
 import { aiUsage } from './aiusage.js';
 import { fleetSummary } from './fleet.js';
@@ -265,6 +267,30 @@ app.get('/api/surface/:device', async (req, res, next) => {
 app.get('/api/playbooks', async (_req, res, next) => { try { res.json(await playbooks()); } catch (e) { next(e); } });
 app.get('/api/brain', async (_req, res) => res.json((await brainHealth()) || { ok: false }));
 app.get('/api/fleet-summary', async (req, res, next) => { try { res.json(await fleetSummary(windowOf(req.query))); } catch (e) { next(e); } });
+// Block a linked attack's hosts on every endpoint. The admin clicking it is
+// the human yes; viewers are refused by the auth layer (not a viewer POST).
+// Each host goes through block_host (approved, local and well-known service
+// hosts are refused) as a fleet-wide action the actuator applies on every
+// real endpoint.
+app.post('/api/campaigns/:id/block', async (req, res, next) => {
+  try {
+    const c = (await campaigns()).find((x) => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'no such linked attack' });
+    const hosts = c.indicators.hosts.filter((h) => !localTarget(h) && !isServiceHost(h));
+    const server = createMcpServer({ actor: 'console (admin)' });
+    const [ct, st] = InMemoryTransport.createLinkedPair(); await server.connect(st);
+    const client = new Client({ name: 'agent-siem-console', version: '0.1.0' }); await client.connect(ct);
+    const blocked = [], refused = [];
+    try {
+      for (const host of hosts) {
+        const r = await client.callTool({ name: 'block_host', arguments: { host, device: '*', reason: `Linked attack: ${c.name}` } });
+        (r.isError ? refused : blocked).push(r.isError ? `${host}: ${r.content?.[0]?.text || 'refused'}` : host);
+      }
+    } finally { await client.close(); await server.close(); }
+    const real = ((await gr().roQuery('MATCH (d:Device) WHERE coalesce(d.simulated, false) = false AND d.id <> \'*\' RETURN d.id AS id')).data || []).map((x) => x.id);
+    res.json({ blocked, refused, skipped: c.indicators.hosts.length - hosts.length, real_endpoints: real });
+  } catch (e) { next(e); }
+});
 app.get('/api/campaigns', async (_req, res, next) => { try { res.json(await campaigns()); } catch (e) { next(e); } });
 app.get('/api/intel/:value', async (req, res, next) => { try { res.json(await indicatorIntel(req.params.value)); } catch (e) { next(e); } });
 
@@ -304,8 +330,9 @@ app.get('/api/actions/pending', adminOnly, async (req, res, next) => {
   try {
     const device = String(req.query.device || '');
     const r = await gr().roQuery(
-      `MATCH (a:Action {device: $device, status: 'queued'})
-       WHERE a.type IN ['block_host', 'contain_session']
+      `MATCH (a:Action) WHERE a.type IN ['block_host', 'contain_session']
+         AND ((a.device = $device AND a.status = 'queued')
+           OR (a.device = '*' AND a.status IN ['queued', 'applied', 'failed'] AND NOT $device IN coalesce(a.applied_on, [])))
        RETURN ID(a) AS id, a.type AS type, a.target AS target, a.reason AS reason, a.alert AS alert, a.ts AS ts
        ORDER BY a.ts LIMIT 20`, { params: { device } });
     const out = [];
@@ -327,8 +354,12 @@ app.post('/api/actions/:id/result', async (req, res, next) => {
     const id = Number(req.params.id); const b = req.body || {};
     await g().query(
       `MATCH (a:Action) WHERE ID(a) = $id
-       SET a.status = $status, a.applied_at = $ts, a.result = $result, a.daemon_rules = $rules`,
-      { params: { id, status: b.ok ? 'applied' : 'failed', ts: Date.now(), result: String(b.detail || '').slice(0, 500), rules: JSON.stringify(b.installed || []) } });
+       SET a.applied_on = CASE WHEN a.device = '*' THEN coalesce(a.applied_on, []) + [$dev] ELSE a.applied_on END,
+           a.status = CASE WHEN $ok OR (a.device = '*' AND a.status = 'applied') THEN 'applied' ELSE 'failed' END,
+           a.applied_at = $ts,
+           a.result = CASE WHEN a.device = '*' THEN coalesce(a.result + ' | ', '') + $dev + ': ' + $result ELSE $result END,
+           a.daemon_rules = $rules`,
+      { params: { id, ok: !!b.ok, dev: String(b.device || ''), ts: Date.now(), result: String(b.detail || '').slice(0, 300), rules: JSON.stringify(b.installed || []) } });
     broadcast({ type: 'update', device: String(b.device || '') });
     res.json({ ok: true });
   } catch (e) { next(e); }
