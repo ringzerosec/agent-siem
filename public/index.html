@@ -120,6 +120,10 @@
   .camp .eps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
   .camp .eps button { font: 11px var(--mono); border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
   .camp .eps button:hover { border-color: var(--primary); }
+  #surface .row.focusable { cursor: pointer; }
+  #surface .row.focusable:hover { background: var(--accent); }
+  #surface .row.focusable.on { background: var(--teal-light); }
+  #surface .row.nograph { opacity: .6; cursor: default; }
   .camp .cta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
   .camp .cta .ctamsg { font-size: 11.5px; }
   .btn.primary.danger { background: var(--destructive); border-color: var(--destructive); }
@@ -1101,6 +1105,7 @@
     state.net.unselectAll();
     if (a) state.net.fit({ nodes: a.nodes, animation: false }); else fitReadable(state.net);
     $('#spotClear').hidden = !a;
+    if (!a) $('#surface')?.querySelectorAll('.focusable.on').forEach((x) => x.classList.remove('on'));
   }
   function renderEndpoint(id, alerts) {
     const d = state.devices?.get(id) || { id };
@@ -1111,6 +1116,32 @@
     $('#endpoint').innerHTML = `<div class="row1"><span class="host">${esc(d.id)}</span>${d.simulated ? '<span class="sim badge outline">sim</span>' : ''}${verdict}</div>
       <div class="team">${esc(d.owner || 'Unassigned')} · ${esc((d.agents || []).filter(Boolean).join(', ') || 'no agents seen')}</div>
       <dl><div><dt>sessions</dt><dd>${d.sessions ?? '—'}</dd></div><div><dt>actions</dt><dd>${d.actions ?? '—'}</dd></div><div><dt>contained</dt><dd>${contained}/${alerts.length}</dd></div><div><dt>last seen</dt><dd title="${fmt(d.last)}">${ago(d.last)}</dd></div></dl>`;
+  }
+  // Click an AI service, MCP server or skill in the side panel: spotlight it in
+  // the graph with what touched it (the processes and agents that used it and
+  // their steps around it); everything else dims. Works like an alert spotlight.
+  async function focusSurface(kind, key, row) {
+    const g = state.graph; if (!g || !state.net) return;
+    const P = (n) => n.properties || {};
+    const seeds = g.nodes.filter((n) =>
+      kind === 'mcp' ? (n.labels.includes('McpTool') && P(n).server === key) || (n.labels.includes('McpServer') && P(n).name === key)
+        : kind === 'ai' ? n.labels.includes('Host') && P(n).name === key
+          : (n.labels.includes('Skill') && P(n).path === key) || (n.labels.includes('File') && String(P(n).path || '').startsWith(key))).map((n) => n.id);
+    if (!seeds.length) { row?.classList.add('nograph'); row?.setAttribute('title', 'Not in the graph for this time range'); return; }
+    // The seeds, the actors that touched them, and those actors' parents.
+    const actor = (id) => { const n = g.nodes.find((x) => x.id === id); return n && (n.labels.includes('Process') || n.labels.includes('Agent')); };
+    const nodes = new Set(seeds), edges = new Set();
+    for (const e of g.edges) if (nodes.has(e.sourceId) || nodes.has(e.destinationId)) { edges.add(e.id); nodes.add(e.sourceId); nodes.add(e.destinationId); }
+    const actors = [...nodes].filter(actor);
+    for (const e of g.edges) if (actors.includes(e.destinationId) && actor(e.sourceId)) { edges.add(e.id); nodes.add(e.sourceId); }
+    // On "attack paths only" the item may not be drawn: show everything first.
+    if ([...nodes].some((id) => !state.nodes.get(id)) && state.pathsOnly) {
+      state.pathsOnly = false; state.pathsAuto = false;
+      if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); } state.net = null;
+      await openDevice(state.device, true);
+    }
+    $('#surface').querySelectorAll('.focusable.on').forEach((x) => x.classList.remove('on')); row?.classList.add('on');
+    spotlight({ id: `surface:${kind}:${key}`, nodes: [...nodes], edges: [...edges] });
   }
   // MCP servers (declared/used, approved?, refused calls) and skill surfaces.
   async function loadSurface(id) {
@@ -1123,16 +1154,16 @@
       const mcp = d.mcp.map((m) => {
         const bad = !m.approved || m.held;
         const status = m.held ? 'held' : m.approved ? 'approved' : 'untrusted';
-        return `<div class="row ${bad ? 'bad' : ''}"><span class="n">${esc(m.name)}</span><span class="badge ${bad ? 'destructive' : 'success'}">${status}</span>
+        return `<div class="row focusable ${bad ? 'bad' : ''}" data-focus="mcp" data-key="${esc(m.name)}" title="Show this MCP server in the graph"><span class="n">${esc(m.name)}</span><span class="badge ${bad ? 'destructive' : 'success'}">${status}</span>
           <span class="m">${m.declared ? esc(m.transport || '') + (m.agent ? ' · ' + esc(m.agent) : '') : 'not declared in any config'} · ${m.calls} call${m.calls === 1 ? '' : 's'}${m.refused ? ` · <b style="color:var(--primary)">${m.refused} blocked</b>` : ''}${m.tools?.length ? ' · ' + esc(m.tools.join(', ')) : ''}</span></div>`;
       }).join('') || '<div class="empty">No MCP servers declared or used.</div>';
       const skills = d.skills.map((k) => {
         const bad = ['high', 'critical'].includes(k.risk), warn = k.risk === 'medium';
-        return `<div class="row ${bad ? 'bad' : warn ? 'warn' : ''}"><span class="n" title="${esc(k.path)}">${esc(k.kind)} · ${esc(String(k.path).split('/').filter(Boolean).pop())}</span><span class="badge ${bad ? 'destructive' : warn ? 'warning' : 'success'}">${esc(k.risk)}</span>
+        return `<div class="row focusable ${bad ? 'bad' : warn ? 'warn' : ''}" data-focus="skill" data-key="${esc(k.path)}" title="Show this in the graph"><span class="n" title="${esc(k.path)}">${esc(k.kind)} · ${esc(String(k.path).split('/').filter(Boolean).pop())}</span><span class="badge ${bad ? 'destructive' : warn ? 'warning' : 'success'}">${esc(k.risk)}</span>
           <span class="m">${esc(k.agent)} · ${esc(k.path)}${k.findings?.length ? '<br>' + k.findings.slice(0, 2).map((f) => esc(`${f.category}: ${f.message}`)).join('<br>') : ''}</span></div>`;
       }).join('') || '<div class="empty">No skill scan from this endpoint yet.</div>';
       const ai = await (await fetch(`/api/ai-usage?device=${encodeURIComponent(id)}`)).json();
-      const aiRows = ai.map((r) => `<div class="row ${r.approved ? '' : 'bad'}"><span class="n">${esc(r.host)}</span><span class="badge ${r.approved ? 'success' : 'destructive'}">${r.approved ? 'approved' : 'shadow'}</span>
+      const aiRows = ai.map((r) => `<div class="row focusable ${r.approved ? '' : 'bad'}" data-focus="ai" data-key="${esc(r.host)}" title="Show this AI service in the graph"><span class="n">${esc(r.host)}</span><span class="badge ${r.approved ? 'success' : 'destructive'}">${r.approved ? 'approved' : 'shadow'}</span>
           <span class="m">${esc(r.provider)}${r.gateway ? ' · gateway' : ''} · ${r.calls} call${r.calls === 1 ? '' : 's'} · ${esc(r.processes.join(', '))}${r.unregistered.length ? ` · <b style="color:#b91c1c">unregistered: ${esc(r.unregistered.join(', '))}</b>` : ''}</span></div>`).join('') || '<div class="empty">No AI traffic seen.</div>';
       let actRows = '';
       try {
@@ -1143,6 +1174,7 @@
         }).join('');
       } catch {}
       $('#surface').innerHTML = `${actRows}<div class="sh">AI services</div>${aiRows}<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
+      $('#surface').querySelectorAll('[data-focus]').forEach((row) => row.onclick = () => focusSurface(row.dataset.focus, row.dataset.key, row));
     } catch { $('#surface').innerHTML = '<div class="empty">Could not load.</div>'; }
   }
   // Back on the wall: tiles laid out while it was hidden were not fitted
