@@ -652,6 +652,9 @@
   function fitReadable(net) {
     net.fit({ animation: false });
     if (net === state.net && net.getScale() < 0.7) net.moveTo({ scale: 0.7, position: net.getViewPosition() });
+    // Tiles: zoom a little past the fit so the network fills the tile and
+    // runs off its edges, instead of a small disc with empty sides.
+    else if (net !== state.net) net.moveTo({ scale: net.getScale() * 1.25, position: net.getViewPosition() });
   }
   // Lay the graph out without showing it move: vis computes the physics with
   // redraws blocked (stabilize), then physics is switched off and the graph
@@ -750,19 +753,9 @@
     t.el.querySelector('.loading')?.remove();
     const al = gph.alerts.filter((a) => a.severity !== 'info');
     let { vnodes, vedges } = toVis(gph.nodes, gph.edges, al, true);
-    // Thumbnails show the attack paths only (a hairball of 200 dots says
-    // nothing at this size); endpoints with no alert keep their whole graph.
-    // Only the 3 worst paths, and nodes in their own colours with just the
-    // path edges in red: a tile should read as "this is what happened", not
-    // as a red alarm.
+    // Tiles show the whole graph with the attack paths in red: the living
+    // network is the picture; the footer says what the worst path is.
     const rank = { critical: 0, high: 1, medium: 2, low: 3 };
-    if (al.length) {
-      const worst = al.slice().sort((x, y) => (rank[x.severity] ?? 4) - (rank[y.severity] ?? 4) || (y.ts?.length || 0) - (x.ts?.length || 0)).slice(0, 3);
-      const keepN = new Set(worst.flatMap((a) => a.nodes)), keepE = new Set(worst.flatMap((a) => a.edges));
-      const nb = css('--node-border');
-      vnodes = vnodes.filter((n) => keepN.has(n.id)).map((n) => ({ ...n, size: n.size + 6, shadow: false, borderWidth: 1, color: { border: nb, background: nb } }));
-      vedges = vedges.filter((e) => keepE.has(e.id) || (keepN.has(e.from) && keepN.has(e.to)));
-    }
     const top = al.slice().sort((x, y) => (rank[x.severity] ?? 4) - (rank[y.severity] ?? 4) || (y.ts?.length || 0) - (x.ts?.length || 0))[0];
     t.issue = top ? { title: top.title, severity: top.severity, more: new Set(al.map((a) => a.title)).size - 1 } : null;
     const d = state.devices?.get(id); if (d) tileFoot(t, d);
@@ -1145,7 +1138,7 @@
   // Back on the wall: tiles laid out while it was hidden were not fitted
   // (see settle); fit every tile once the browser has sized them again.
   function refitTiles() {
-    requestAnimationFrame(() => { for (const t of state.tiles.values()) { if (!t.net || !t.net.body.container.clientWidth) continue; t.net.redraw(); t.net.fit({ animation: false }); t.net.__needsFit = false; } });
+    requestAnimationFrame(() => { for (const t of state.tiles.values()) { if (!t.net || !t.net.body.container.clientWidth) continue; t.net.redraw(); fitReadable(t.net); t.net.__needsFit = false; } });
   }
   function closeDevice() {
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
