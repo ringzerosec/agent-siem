@@ -692,61 +692,20 @@
   }
 
 
-  // ---- flow animation (endpoint graph) -------------------------------------
-  // Dots travel along edges in the direction of the action: always on the
-  // attack paths (red), and on the edges of a clicked node (teal) or a
-  // spotlighted attack. On a step the enforcement refused, the dot stops
-  // halfway and fades: you watch the block happen. A clicked node pulses.
-  // Off with prefers-reduced-motion, and paused when nothing is visible.
-  const FLOW = { edges: new Map(), halo: null, sel: null, spot: null, raf: 0, last: 0 };
-  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // ---- node highlight (endpoint graph) -------------------------------------
+  // A clicked node gets a ring; vis already highlights its edges. Static:
+  // with this many events, anything moving on the graph is a distraction.
+  const FLOW = { halo: null, sel: null, spot: null };
   function flowTargets() {
-    FLOW.edges.clear(); FLOW.halo = null;
-    if (!state.net || !state.edges) { return; }
-    const attack = new Set((state.graph?.alerts || []).filter((a) => a.severity !== 'info').flatMap((a) => a.edges));
-    const only = FLOW.spot;   // a spotlighted attack: only its edges flow
-    for (const e of state.edges.get()) {
-      if (only ? only.has(e.id) : attack.has(e.id)) FLOW.edges.set(e.id, { color: '#dc2626', refused: e.dashes === true });
-    }
-    if (FLOW.sel != null && state.nodes.get(FLOW.sel)) {
-      FLOW.halo = FLOW.sel;
-      for (const id of state.net.getConnectedEdges(FLOW.sel)) if (!FLOW.edges.has(id)) FLOW.edges.set(id, { color: '#01696f', refused: state.edges.get(id)?.dashes === true });
-    }
-    // Keep it light: at most 120 animated edges.
-    if (FLOW.edges.size > 120) FLOW.edges = new Map([...FLOW.edges].slice(0, 120));
-    kickFlow();
+    FLOW.halo = FLOW.sel != null && state.nodes?.get(FLOW.sel) ? FLOW.sel : null;
+    state.net?.redraw();
   }
   function highlightNode(id) { FLOW.sel = id; flowTargets(); }
   function drawFlow(ctx) {
-    if (REDUCED || (!FLOW.edges.size && FLOW.halo == null)) return;
-    const now = performance.now(), body = state.net?.body; if (!body) return;
-    ctx.save();
-    for (const [id, f] of FLOW.edges) {
-      const e = body.edges[id]; if (!e || !e.from || !e.to || e.options.hidden) continue;
-      const seed = (typeof id === 'number' ? id : String(id).length) % 9 / 9;
-      for (const off of [0, 0.5]) {
-        let t = (now / 1800 + off + seed) % 1, alpha = 1;
-        if (f.refused) { if (t > 0.5) continue; alpha = t > 0.35 ? (0.5 - t) / 0.15 : 1; }   // stops at the block
-        let pt; try { pt = e.edgeType.getPoint(t); } catch { continue; }
-        ctx.globalAlpha = alpha; ctx.fillStyle = f.color; ctx.shadowColor = f.color; ctx.shadowBlur = 8;
-        ctx.beginPath(); ctx.arc(pt.x, pt.y, 3.2, 0, Math.PI * 2); ctx.fill();
-      }
-    }
-    if (FLOW.halo != null && body.nodes[FLOW.halo]) {
-      const n = body.nodes[FLOW.halo], r = (n.options.size || 15) + 7 + 3 * Math.sin(now / 320);
-      ctx.globalAlpha = 0.55 + 0.25 * Math.sin(now / 320); ctx.shadowBlur = 0; ctx.lineWidth = 3; ctx.strokeStyle = '#01696f';
-      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.restore();
+    const n = FLOW.halo != null && state.net?.body?.nodes[FLOW.halo]; if (!n) return;
+    ctx.save(); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(1,105,111,.6)';
+    ctx.beginPath(); ctx.arc(n.x, n.y, (n.options.size || 15) + 8, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
   }
-  function flowLoop(ts) {
-    FLOW.raf = 0;
-    if (REDUCED || !state.net || document.hidden || $('#detail').hidden || (!FLOW.edges.size && FLOW.halo == null)) return;
-    if (ts - FLOW.last > 33) { FLOW.last = ts; state.net.redraw(); }   // ~30 fps
-    FLOW.raf = requestAnimationFrame(flowLoop);
-  }
-  function kickFlow() { if (!FLOW.raf && !REDUCED) FLOW.raf = requestAnimationFrame(flowLoop); }
-  document.addEventListener('visibilitychange', kickFlow);
 
   // ---- the wall ---------------------------------------------------------
   // Only redraw tiles whose device changed; a full redraw of every tile on
@@ -1254,7 +1213,7 @@
   function closeDevice() {
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
     state.device = null; state.focus = null; state.graph = null;
-    FLOW.sel = null; FLOW.spot = null; FLOW.edges.clear(); FLOW.halo = null;
+    FLOW.sel = null; FLOW.spot = null; FLOW.halo = null;
     $('#detail').hidden = true; $('#back').hidden = true; $('#pageTitle').textContent = TITLES[view] || ''; pushRoute();
     if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); state.net = null; }
     $('#nodeDetail').hidden = true; $('#nodehint').hidden = false; $('#nodeCard').hidden = true;
