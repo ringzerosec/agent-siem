@@ -218,7 +218,7 @@ export const RULES = [
     id: 'linked-to-campaign-infra',
     threat: 'T5',
     severity: 'critical',
-    title: 'Connection to infrastructure shared with a known attack',
+    title: 'Connection to a server already used in an attack',
     cypher: `
       MATCH (s:Session {id: $session})
       WITH s MATCH (s)-[:HAS]->(p:Process)-[cn:CONNECTED|SENT|RESOLVED]->(h:Host)
@@ -229,7 +229,7 @@ export const RULES = [
       WHERE f.severity IN ['critical', 'high'] AND f.device <> s.device AND f.rule <> 'linked-to-campaign-infra'
       WITH p, cn, h, r1, ip, r2, bad, collect(f)[0] AS f
       RETURN p, h, ip, bad, cn, [p, h, ip, bad] AS pn, [cn, r1, r2] AS pr,
-             p.name + ' contacted ' + h.name + ', which shares ' + ip.addr + ' with ' + bad.name + ' from an attack on ' + f.device + (CASE WHEN cn.allowed = false THEN ' (refused)' ELSE '' END) AS summary
+             p.name + ' connected to ' + h.name + '. That name runs on the same server (IP ' + ip.addr + ') as ' + bad.name + ', which was used in an attack on ' + f.device + ': same server, new name. ' + (CASE WHEN cn.allowed = false THEN 'This connection was blocked.' ELSE 'This connection went through.' END) AS summary
       ORDER BY cn.ts DESC LIMIT 10`,
   },
   // Skills: an agent reading or running files inside a skill the skill scanner
