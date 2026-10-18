@@ -1149,8 +1149,8 @@
   window.agentSiem = { wake, sleep, screen: screenContext };
 
   // ---- triage agent -------------------------------------------------------
-  const VERDICT = { true_positive_contained: ['contained', 'contained'], true_positive_active: ['active threat', 'solid'], false_positive: ['false positive', 'outline'], needs_human: ['needs a human', 'warning'] };
-  const verdictBadge = (v) => `<span class="badge ${VERDICT[v]?.[1] || 'outline'}" title="Triage agent verdict">agent: ${esc(VERDICT[v]?.[0] || v)}</span>`;
+  const VERDICT = { true_positive_contained: ['real attack · blocked', 'contained'], true_positive_active: ['real attack · got through', 'solid'], false_positive: ['false alarm', 'outline'], needs_human: ['needs a person', 'warning'] };
+  const verdictBadge = (v) => `<span class="badge ${VERDICT[v]?.[1] || 'outline'}" title="Verdict of the investigation">${esc(VERDICT[v]?.[0] || v)}</span>`;
   const KIND_MARK = { read: 'Q', algorithm: 'Σ', action: '!', rec: '→', vk: '✓', thought: '·' };
   // One line a person can read for each tool result.
   function resultLine(tool, r) {
@@ -1182,7 +1182,7 @@
       ? (st.text ? `<div class="step"><span class="k thought">${KIND_MARK.thought}</span><span class="why">${esc(st.text)}</span></div>` : '')
       : `<div class="step"><span class="k ${stepKind(st)}" title="${stepKind(st) === 'rec' ? 'recommendation, waits for a person' : st.kind}">${KIND_MARK[stepKind(st)] || '?'}</span><span><span class="tool">${esc(st.tool)}</span>${st.why ? ` <span class="why">· ${esc(st.why)}</span>` : ''}</span><div class="res ${st.error ? 'err' : ''}">${esc(resultLine(st.tool, st.result))}</div></div>`).join('');
     const v = job.verdict;
-    const verdictHtml = v ? `<div class="verdict"><div class="vh">${verdictBadge(v.verdict)}<span class="dim" style="font-weight:400">confidence ${Math.round(v.confidence * 100)}%</span></div>${esc(v.summary)}${v.evidence?.length ? `<ul>${v.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}</div>` : '';
+    const verdictHtml = v ? `<div class="verdict"><div class="vh">${verdictBadge(v.verdict)}<span class="dim" style="font-weight:400">${job.mode === 'agent' ? `by Claude · ${Math.round(v.confidence * 100)}% sure (its own estimate)` : 'by the playbook · rule-based, no AI'}</span></div>${esc(v.summary)}${v.evidence?.length ? `<ul>${v.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}</div>` : '';
     $('#triage').innerHTML = verdictHtml + steps + (job.status === 'running' ? '<div class="running">Agent is investigating…</div>' : '');
   }
   async function investigate(alertId) {
