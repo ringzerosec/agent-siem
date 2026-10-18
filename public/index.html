@@ -127,9 +127,10 @@
   .camp .cta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
   .camp .cta .ctamsg { font-size: 11.5px; }
   .btn.primary.danger { background: var(--destructive); border-color: var(--destructive); }
-  body.readonly [data-block], body.readonly [data-quar], body.readonly [data-quarc] { display: none !important; }
+  body.readonly [data-block], body.readonly [data-quar], body.readonly [data-quarc], body.readonly [data-qalert] { display: none !important; }
   #surface .row .qact { grid-column: 1 / -1; margin-top: 6px; }
-  #surface .row .qtag { grid-column: 1 / -1; margin-top: 6px; font: 600 11px var(--mono); color: var(--primary); }
+  #surface .row .qtag { grid-column: 1 / -1; margin-top: 6px; }
+  .qtag { font: 600 11px var(--mono); color: var(--primary); align-self: center; }
   .camp-graph { position: sticky; top: 0; }
   #campNet { height: min(640px, calc(100vh - 220px)); background: var(--canvas); }
   @media (max-width: 900px) { #campaigns .camp-body { grid-template-columns: 1fr; } }
@@ -1334,6 +1335,10 @@
     try {
       const d = await (await fetch(`/api/surface/${encodeURIComponent(id)}`)).json();
       if (state.device !== id) return;
+      // Skills already quarantined (any session): alert cards show it instead of the button.
+      let fresh = false;
+      for (const k of d.skills) if (k.quarantined && !quarantined.has(`${id}|${k.path}`)) { quarantined.add(`${id}|${k.path}`); fresh = true; }
+      if (fresh && state.graph) renderAlerts(state.graph.alerts);
       const risky = d.mcp.filter((m) => !m.approved || m.held).length + d.skills.filter((k) => ['high', 'critical'].includes(k.risk)).length;
       $('#surfaceCount').textContent = risky ? `${risky} risky` : `${d.mcp.length + d.skills.length}`;   // shadow AI adds below
       $('#surfaceCount').className = 'badge ' + (risky ? 'destructive' : 'outline');
@@ -1417,9 +1422,10 @@
       const open = openGroups.has(k);
       const div = document.createElement('div'); div.className = `panel group ${worst}`;
       div.innerHTML = `<div class="gh"><span class="badge destructive">${esc(k)}</span><span class="gt">${esc(THREATS[k] || k)}</span><span class="badge outline">${items.length}</span><span class="caret">${open ? '▾' : '▸'}</span></div>
-        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}${state.triaged?.get(a.id) ? verdictBadge(state.triaged.get(a.id).verdict) : ''}${a.model?.priority ? `<span class="badge outline" title="Local decision model (${esc(a.model.by)}), calibrated p=${a.model.priority_p}${a.model.technique ? ' · technique: ' + esc(a.model.technique) : ''}">model: ${esc(a.model.priority)}</span>` : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>${a.blocked === true ? 'Follow-up' : 'Recommended response'}</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}<div class="inv"><button class="btn sm primary" data-investigate="${esc(a.id)}">${state.triaged?.get(a.id) ? 'Investigate again' : 'Investigate with agent'}</button>${state.triaged?.get(a.id) ? '<span class="dim" style="font-size:11px">last verdict below</span>' : ''}</div></div></li>`; }).join('')}</ul>`;
+        <ul class="items" ${open ? '' : 'hidden'}>${items.map((a, i) => { const key = `${k}:${i}:${a.summary}`; return `<li class="alert ${a.severity} ${openAlerts.has(key) ? 'open' : ''}" data-i="${i}">${warnIcon(a.severity === 'critical' ? '#dc2626' : a.severity === 'high' ? '#d97706' : '#6b7280')}<div class="t">${esc(a.title)}</div><div class="s">${esc(a.summary)}</div><div class="chips"><span class="badge ${a.severity === 'critical' ? 'solid' : a.severity === 'high' ? 'warning' : 'outline'}">${esc(a.severity)}</span>${a.blocked === true ? '<span class="badge contained">contained</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}${state.triaged?.get(a.id) ? verdictBadge(state.triaged.get(a.id).verdict) : ''}${a.model?.priority ? `<span class="badge outline" title="Local decision model (${esc(a.model.by)}), calibrated p=${a.model.priority_p}${a.model.technique ? ' · technique: ' + esc(a.model.technique) : ''}">model: ${esc(a.model.priority)}</span>` : ''}<span class="when">${a.ts?.length ? 'first seen ' + esc(new Date(Math.min(...a.ts)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : ''}</span></div><div class="sess">${a.sessions > 1 ? `${a.sessions} sessions` : esc(a.session)} · click for response</div><div class="ev">${a.attack ? `<div class="attack">MITRE ${esc(a.attack)}</div>` : ''}${a.response ? `<div class="resp"><b>${a.blocked === true ? 'Follow-up' : 'Recommended response'}</b>${esc(a.response)}</div>` : ''}${evidenceHtml(a)}<div class="inv"><button class="btn sm primary" data-investigate="${esc(a.id)}">${state.triaged?.get(a.id) ? 'Investigate again' : 'Investigate with agent'}</button>${quarantineButton(a)}${state.triaged?.get(a.id) ? '<span class="dim" style="font-size:11px">last verdict below</span>' : ''}</div></div></li>`; }).join('')}</ul>`;
       div.querySelector('.gh').onclick = () => { if (openGroups.has(k)) openGroups.delete(k); else openGroups.add(k); renderAlerts(alerts); };
       div.querySelectorAll('[data-investigate]').forEach((b) => { b.onclick = (ev) => { ev.stopPropagation(); investigate(b.dataset.investigate); }; });
+      wireQuarantine(div);
       div.querySelectorAll('.items > li').forEach((el) => { el.onclick = (ev) => { if (ev.target.closest('a') || ev.target.closest('.inv')) return; ev.stopPropagation(); const a = items[Number(el.dataset.i)]; const key = `${k}:${el.dataset.i}:${a.summary}`; if (openAlerts.has(key)) openAlerts.delete(key); else openAlerts.add(key); el.classList.toggle('open'); spotlight(el.classList.contains('open') ? a : null); }; });
       box.appendChild(div);
     }
@@ -1464,7 +1470,7 @@
       ? `<div class="rel"><h2 class="sec">Part of ${rel.length} attack${rel.length > 1 ? 's' : ''}</h2>${rel.slice(0, 5).map((a, i) => `<div class="ra ${esc(a.severity)}">
           <div class="rt">${sevBadge(a.severity)}${a.blocked === true ? '<span class="badge contained">blocked</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}<b>${esc(a.title)}</b></div>
           <div class="rs">${esc(a.summary)}</div>${a.response ? `<div class="rr"><b>${a.blocked === true ? 'Follow-up' : 'Recommended'}:</b> ${esc(a.response)}</div>` : ''}
-          <div class="actions"><button class="btn sm" data-spot="${i}">Show this attack</button><button class="btn sm primary" data-inv="${esc(a.id)}">Investigate</button></div></div>`).join('')}</div>`
+          <div class="actions"><button class="btn sm" data-spot="${i}">Show this attack</button><button class="btn sm primary" data-inv="${esc(a.id)}">Investigate</button>${quarantineButton(a)}</div></div>`).join('')}</div>`
       : '<div class="dim" style="font-size:12px;margin-bottom:8px">Not part of any attack.</div>';
     el.innerHTML = `<div class="kind">${esc(n.labels.join(', '))}</div><div class="name">${esc(label(n).replace('\n', ' · '))}</div>${relHtml}${extra}
       <dl>${props}</dl>
@@ -1472,6 +1478,7 @@
       <h2 class="sec" style="margin:6px 0">Timeline</h2><ul class="tl">${tl || '<li>no timed actions</li>'}</ul>`;
     el.querySelectorAll('[data-spot]').forEach((b) => b.onclick = () => spotlight(rel[Number(b.dataset.spot)]));
     el.querySelectorAll('.rel [data-inv]').forEach((b) => b.onclick = () => investigate(b.dataset.inv));
+    wireQuarantine(el);
     $('.side').scrollTop = 0;
     $('#focusBtn').onclick = () => focusNode(id);
     if (!d.radius) $('#radiusBtn').disabled = true;
@@ -1697,6 +1704,38 @@
     });
     const pick = selectId || $('#campList .camp.on')?.dataset.id || campData[0]?.id;
     if (pick) showCampaign(pick);
+  }
+  // The skill an alert is about: a Skill node on its path, or the folder of a
+  // SKILL.md the agent read. null when the alert is not about a skill.
+  function skillOfAlert(a) {
+    const nodes = state.graph?.nodes || [];
+    for (const id of a.nodes || []) {
+      const n = nodes.find((x) => x.id === id); if (!n) continue;
+      if (n.labels.includes('Skill') && n.properties?.path) return n.properties.path;
+      const p = n.labels.includes('File') && String(n.properties?.path || '');
+      const m = p && p.match(/^(.*\/(?:skills|plugins|commands)\/[^/]+)\//);
+      if (m) return m[1];
+    }
+    return null;
+  }
+  const quarantined = new Set();   // device|path quarantined in this session (the panel shows it from the graph too)
+  function quarantineButton(a) {
+    const path = skillOfAlert(a); if (!path) return '';
+    if (quarantined.has(`${state.device}|${path}`)) return '<span class="qtag">skill quarantined</span>';
+    return `<button class="btn sm" data-qalert="${esc(path)}">Quarantine skill</button>`;
+  }
+  function wireQuarantine(root) {
+    root.querySelectorAll('[data-qalert]').forEach((btn) => btn.onclick = (ev) => {
+      ev.stopPropagation();
+      confirmThen(btn, 'Confirm: quarantine', async () => {
+        const dev = state.device, path = btn.dataset.qalert;
+        const r = await (await fetch('/api/skills/quarantine', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: dev, path }) })).json();
+        if (r.error || r.refused?.length) throw new Error(r.error || r.refused[0]);
+        quarantined.add(`${dev}|${path}`);
+        document.querySelectorAll(`[data-qalert="${CSS.escape(path)}"]`).forEach((b) => { const t = document.createElement('span'); t.className = 'qtag'; t.textContent = 'skill quarantined'; b.replaceWith(t); });
+        loadSurface(dev);
+      });
+    });
   }
   // Two-click confirm for anything that changes an endpoint: the first click
   // arms (red, says what will happen), a second within 6 s does it.
