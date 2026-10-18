@@ -360,7 +360,16 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
     title: 'Deep scan the fleet',
     description: 'Start a discovery scan on every endpoint (or the listed ones): the Ring Zero Security daemon on each runs its skill scanner, non-human identity scan, health and posture checks, supply-chain and compliance self-assessment, and the results land in the graph. Returns a job id; use scan_status to follow it, then fleet_inventory / propose_policies / iso42001_readiness.',
     inputSchema: { devices: z.array(z.string()).optional() },
-  }, async ({ devices }) => { const { startDeepScan } = await import('./governance.js'); return text(await startDeepScan(devices)); });
+  }, async ({ devices }) => {
+    // Wait for the scan here (up to ~25 s) and return the result in one call,
+    // so an agent does not poll scan_status in a loop.
+    const { startDeepScan, scanStatus } = await import('./governance.js');
+    const started = await startDeepScan(devices);
+    let st = null;
+    for (let i = 0; i < 50; i++) { st = await scanStatus(started.job); if (!st.pending.length) break; await new Promise((ok) => setTimeout(ok, 500)); }
+    return text({ job: started.job, endpoints: started.endpoints, reported: st?.done ?? 0, still_pending: st?.pending ?? [], complete: !st?.pending.length,
+      next: st?.pending.length ? 'Some endpoints have not reported yet; call scan_status once later, not in a loop.' : 'Scan complete: read fleet_inventory and iso42001_readiness for the results.' });
+  });
 
   server.registerTool('scan_status', {
     title: 'Deep scan status', description: 'Progress of a deep scan job: how many endpoints reported, which are still pending.',

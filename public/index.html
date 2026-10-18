@@ -1118,7 +1118,12 @@
         if (e.role !== 'user' && $('#zero').classList.contains('min')) { Z.lastLine = (zCap.lastElementChild?.textContent || '').trim(); $('#zState').textContent = Z.lastLine.slice(-120); }
         if (e.role === 'user') { Z.turnZ = (Z.turnZ || 0) + 0; if (/\b(go to sleep|that'?s all|goodbye|good night|stop listening)\b/i.test(zCap.lastElementChild.textContent)) setTimeout(() => sleep('asked to sleep'), 2500); }
       } else if (e.type === 'ui') { await applyUi(e.tool, e.args || {}); pushScreen(); }
-      else if (e.type === 'tool') { zLine('a', '· ' + e.tool.replace(/_/g, ' ')); }
+      else if (e.type === 'tool') {
+        // The same tool again right after: count it ("· scan status ×3") instead of a new line.
+        const last = zCap.lastElementChild;
+        if (last?.classList.contains('a') && last.dataset.tool === e.tool) { last.dataset.n = String(Number(last.dataset.n || 1) + 1); last.textContent = `· ${e.tool.replace(/_/g, ' ')} ×${last.dataset.n}`; }
+        else { zLine('a', '· ' + e.tool.replace(/_/g, ' ')); const el = zCap.lastElementChild; if (el) { el.dataset.tool = e.tool; el.dataset.n = '1'; } }
+      }
       else if (e.type === 'thought') { zLine('a', '… ' + e.text); }
       else if (e.type === 'action') { zLine('a do', '! ' + e.tool.replace(/_/g, ' ') + ' ' + (e.args.host || e.args.session || e.args.title || '')); }
       else if (e.type === 'working') { Z.working = e.on; Z.lastHeard = Date.now(); zSet(Z.state, e.on ? 'checking the graph…' : 'listening · talk any time'); }

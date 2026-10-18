@@ -154,6 +154,9 @@ export async function iso42001() {
   const esc = await q(`MATCH (e:Escalation) RETURN count(e) AS n`);
   const ev = await q(`MATCH ()-[e:READ|WROTE|EXECUTED|CONNECTED|SENT|USED_TOOL|CALLED_AI]->() RETURN count(e) AS n, min(e.ts) AS first`);
   const mcp = await q(`MATCH (m:McpServer) RETURN count(m) AS n, sum(CASE WHEN m.approved THEN 1 ELSE 0 END) AS approved`);
+  // Count untrusted servers, not declarations: one server on four laptops is one server.
+  const mcpU = await q(`MATCH (d:Device)-[:DECLARES]->(m:McpServer) WHERE NOT coalesce(m.approved, false) OR m.held = true RETURN count(DISTINCT m.name) AS servers, count(DISTINCT d) AS devices, collect(DISTINCT m.name) AS names`);
+  const mcpGap = (mcpU.servers || 0) ? `Remove or approve ${mcpU.servers} untrusted MCP server${mcpU.servers > 1 ? 's' : ''} (${(mcpU.names || []).slice(0, 3).join(', ')}${(mcpU.names || []).length > 3 ? ', …' : ''}), declared on ${mcpU.devices} endpoint${mcpU.devices > 1 ? 's' : ''}.` : null;
   const sk = await q(`MATCH (k:Skill) RETURN count(k) AS n, sum(CASE WHEN k.risk IN ['high','critical'] THEN 1 ELSE 0 END) AS risky`);
   const pk = await q(`MATCH (p:Package) RETURN count(p) AS n, sum(CASE WHEN coalesce(p.vuln_count, 0) > 0 THEN 1 ELSE 0 END) AS vulnerable`);
   const owned = inv.filter((d) => d.owner).length, scanned = inv.filter((d) => d.posture && d.posture.reachable !== false).length, enforced = inv.filter((d) => d.posture?.enforce_mode === true).length;
@@ -184,8 +187,8 @@ export async function iso42001() {
       evidence: [`Human oversight: autopilot proposes, a person approves; ${dec.pending || 0} decisions waiting.`, `${unreg.length} unregistered agents (processes calling AI APIs that are not known agents).`],
       gaps: [...(unreg.length ? [`Register or stop: ${unreg.join(', ')}.`] : []), ...((dec.pending || 0) ? [`Decide ${dec.pending} pending item(s) in Approvals.`] : [])] },
     { id: 'A.10', name: 'Third-party and supplier relationships', status: status((mcp.n || 0) === (mcp.approved || 0) && (sk.risky || 0) === 0 && (pk.vulnerable || 0) === 0, true),
-      evidence: [`MCP servers: ${mcp.approved || 0} of ${mcp.n || 0} approved. Skills: ${sk.risky || 0} of ${sk.n || 0} flagged by the scanner. Packages: ${pk.vulnerable || 0} of ${pk.n || 0} with OSV advisories.`, `AI providers and gateways are inventoried with their approval state.`],
-      gaps: [...((mcp.n || 0) - (mcp.approved || 0) > 0 ? [`Remove or approve ${(mcp.n || 0) - (mcp.approved || 0)} untrusted MCP server declaration(s).`] : []), ...((sk.risky || 0) ? [`Quarantine ${sk.risky} flagged skill surface(s).`] : [])] },
+      evidence: [`MCP server declarations: ${mcp.approved || 0} of ${mcp.n || 0} approved (${mcpU.servers || 0} distinct untrusted server${(mcpU.servers || 0) === 1 ? '' : 's'}). Skills: ${sk.risky || 0} of ${sk.n || 0} flagged by the scanner. Packages: ${pk.vulnerable || 0} of ${pk.n || 0} with OSV advisories.`, `AI providers and gateways are inventoried with their approval state.`],
+      gaps: [...(mcpGap ? [mcpGap] : []), ...((sk.risky || 0) ? [`Quarantine ${sk.risky} flagged skill surface(s).`] : [])] },
   ];
   const score = Math.round(100 * areas.reduce((n, a) => n + (a.status === 'evidenced' ? 1 : a.status === 'partial' ? 0.5 : 0), 0) / areas.length);
   return { standard: 'ISO/IEC 42001:2023 (Annex A areas)', note: 'Evidence for an audit from the provenance graph. Not a certification.', generated_at: new Date().toISOString(), readiness: score, areas,
