@@ -692,6 +692,62 @@
   }
 
 
+  // ---- flow animation (endpoint graph) -------------------------------------
+  // Dots travel along edges in the direction of the action: always on the
+  // attack paths (red), and on the edges of a clicked node (teal) or a
+  // spotlighted attack. On a step the enforcement refused, the dot stops
+  // halfway and fades: you watch the block happen. A clicked node pulses.
+  // Off with prefers-reduced-motion, and paused when nothing is visible.
+  const FLOW = { edges: new Map(), halo: null, sel: null, spot: null, raf: 0, last: 0 };
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function flowTargets() {
+    FLOW.edges.clear(); FLOW.halo = null;
+    if (!state.net || !state.edges) { return; }
+    const attack = new Set((state.graph?.alerts || []).filter((a) => a.severity !== 'info').flatMap((a) => a.edges));
+    const only = FLOW.spot;   // a spotlighted attack: only its edges flow
+    for (const e of state.edges.get()) {
+      if (only ? only.has(e.id) : attack.has(e.id)) FLOW.edges.set(e.id, { color: '#dc2626', refused: e.dashes === true });
+    }
+    if (FLOW.sel != null && state.nodes.get(FLOW.sel)) {
+      FLOW.halo = FLOW.sel;
+      for (const id of state.net.getConnectedEdges(FLOW.sel)) if (!FLOW.edges.has(id)) FLOW.edges.set(id, { color: '#01696f', refused: state.edges.get(id)?.dashes === true });
+    }
+    // Keep it light: at most 120 animated edges.
+    if (FLOW.edges.size > 120) FLOW.edges = new Map([...FLOW.edges].slice(0, 120));
+    kickFlow();
+  }
+  function highlightNode(id) { FLOW.sel = id; flowTargets(); }
+  function drawFlow(ctx) {
+    if (REDUCED || (!FLOW.edges.size && FLOW.halo == null)) return;
+    const now = performance.now(), body = state.net?.body; if (!body) return;
+    ctx.save();
+    for (const [id, f] of FLOW.edges) {
+      const e = body.edges[id]; if (!e || !e.from || !e.to || e.options.hidden) continue;
+      const seed = (typeof id === 'number' ? id : String(id).length) % 9 / 9;
+      for (const off of [0, 0.5]) {
+        let t = (now / 1800 + off + seed) % 1, alpha = 1;
+        if (f.refused) { if (t > 0.5) continue; alpha = t > 0.35 ? (0.5 - t) / 0.15 : 1; }   // stops at the block
+        let pt; try { pt = e.edgeType.getPoint(t); } catch { continue; }
+        ctx.globalAlpha = alpha; ctx.fillStyle = f.color; ctx.shadowColor = f.color; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, 3.2, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (FLOW.halo != null && body.nodes[FLOW.halo]) {
+      const n = body.nodes[FLOW.halo], r = (n.options.size || 15) + 7 + 3 * Math.sin(now / 320);
+      ctx.globalAlpha = 0.55 + 0.25 * Math.sin(now / 320); ctx.shadowBlur = 0; ctx.lineWidth = 3; ctx.strokeStyle = '#01696f';
+      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function flowLoop(ts) {
+    FLOW.raf = 0;
+    if (REDUCED || !state.net || document.hidden || $('#detail').hidden || (!FLOW.edges.size && FLOW.halo == null)) return;
+    if (ts - FLOW.last > 33) { FLOW.last = ts; state.net.redraw(); }   // ~30 fps
+    FLOW.raf = requestAnimationFrame(flowLoop);
+  }
+  function kickFlow() { if (!FLOW.raf && !REDUCED) FLOW.raf = requestAnimationFrame(flowLoop); }
+  document.addEventListener('visibilitychange', kickFlow);
+
   // ---- the wall ---------------------------------------------------------
   // Only redraw tiles whose device changed; a full redraw of every tile on
   // every event is what makes browsers flag the tab.
@@ -794,12 +850,14 @@
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
       settle(state.net, 2500);
+      FLOW.sel = null; FLOW.spot = null; setTimeout(flowTargets, 0);
       // Dragging a node turns the springs on, so its neighbours follow it;
       // on release the graph settles briefly and freezes again (no refit).
       state.net.on('dragStart', (p) => { if (p.nodes.length) { clearTimeout(state.net.__settle); state.net.setOptions({ physics: { enabled: true } }); } });
       state.net.on('dragEnd', (p) => { if (p.nodes.length) settle(state.net, 1200, false); });
       state.net.on('click', (p) => {
-        if (p.nodes.length) { selectNode(p.nodes[0]); return; }
+        if (p.nodes.length) { highlightNode(p.nodes[0]); selectNode(p.nodes[0]); return; }
+        FLOW.sel = null; flowTargets();
         if (p.edges.length) return;
         // Empty space: drop any alert spotlight and zoom back out to the whole graph.
         if (!$('#spotClear').hidden) { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); }
@@ -807,6 +865,7 @@
         state.net.fit({ animation: false });
       });
       state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
+      state.net.on('afterDrawing', drawFlow);
     } else {
       const have = new Set(state.nodes.getIds());
       const grew = vnodes.some((n) => !have.has(n.id));
@@ -814,6 +873,7 @@
       for (const id of have) if (!vnodes.find((n) => n.id === id)) state.nodes.remove(id);
       for (const id of state.edges.getIds()) if (!vedges.find((e) => e.id === id)) state.edges.remove(id);
       if (grew) settle(state.net, 600);
+      flowTargets();
     }
   }
   async function openDevice(id, keepFocus) {
@@ -1108,8 +1168,9 @@
     if (!state.net) return;
     state.spot = a?.id || null;
     const keepN = new Set(a ? a.nodes : []), keepE = new Set(a ? a.edges : []);
-    state.nodes.update(state.nodes.get().map((n) => ({ id: n.id, opacity: !a || keepN.has(n.id) ? 1 : 0.12, font: { ...(n.font || {}), color: !a || keepN.has(n.id) ? css('--label') : 'rgba(0,0,0,0.12)' } })));
-    state.edges.update(state.edges.get().map((e) => ({ id: e.id, hidden: !!a && !keepE.has(e.id) })));
+    state.nodes.update(state.nodes.get().map((n) => ({ id: n.id, opacity: !a || keepN.has(n.id) ? 1 : 0.3, font: { ...(n.font || {}), color: !a || keepN.has(n.id) ? css('--label') : 'rgba(0,0,0,0.3)' } })));
+    state.edges.update(state.edges.get().map((e) => ({ id: e.id, hidden: false, color: !a || keepE.has(e.id) ? e.__color || e.color : { color: 'rgba(148,163,184,.25)', highlight: 'rgba(148,163,184,.25)' }, __color: e.__color || e.color })));
+    FLOW.spot = a ? new Set(a.edges) : null; flowTargets();
     state.net.unselectAll();
     if (a) state.net.fit({ nodes: a.nodes, animation: false }); else fitReadable(state.net);
     $('#spotClear').hidden = !a;
@@ -1193,6 +1254,7 @@
   function closeDevice() {
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
     state.device = null; state.focus = null; state.graph = null;
+    FLOW.sel = null; FLOW.spot = null; FLOW.edges.clear(); FLOW.halo = null;
     $('#detail').hidden = true; $('#back').hidden = true; $('#pageTitle').textContent = TITLES[view] || ''; pushRoute();
     if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); state.net = null; }
     $('#nodeDetail').hidden = true; $('#nodehint').hidden = false; $('#nodeCard').hidden = true;
@@ -1563,7 +1625,7 @@
   loadFacets(); setInterval(() => { if (view === 'events') loadEvents(); loadFacets(); }, 10000);
 
   $('#back').onclick = closeDevice;
-  $('#nodeClose').onclick = () => { $('#nodeCard').hidden = true; state.selectedNode = null; state.net?.unselectAll(); };
+  $('#nodeClose').onclick = () => { $('#nodeCard').hidden = true; state.selectedNode = null; state.net?.unselectAll(); FLOW.sel = null; flowTargets(); };
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && fitReadable(state.net);
   $('#spotClear').onclick = () => { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); };
