@@ -98,7 +98,8 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const page = (msg = '') => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent SIEM</title>
 <style>body{font:15px system-ui,sans-serif;background:#fafafa;color:#0a0a0a;display:grid;place-items:center;min-height:100vh;margin:0}form{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:28px;width:min(360px,90vw)}h1{font-size:18px;margin:0 0 6px}p{color:#737373;font-size:13px;margin:0 0 16px}.err{color:#b42318}input{width:100%;box-sizing:border-box;height:38px;border:1px solid #e5e5e5;border-radius:8px;padding:0 10px;font:14px system-ui}button{margin-top:12px;width:100%;height:38px;border:0;border-radius:8px;background:#01696f;color:#fff;font:600 14px system-ui;cursor:pointer}
 @media (prefers-color-scheme:dark){body{background:#0a0a0a;color:#fafafa}form{background:#171717;border-color:#262626}input{background:#0a0a0a;color:#fafafa;border-color:#262626}}</style>
-<form method="post" action="/login"><h1>Agent SIEM</h1><p>Ring Zero Security</p>${msg ? `<p class="err">${esc(msg)}</p>` : ''}<input name="password" type="password" autocomplete="current-password" placeholder="Password" autofocus required><button>Sign in</button></form>`;
+<form method="post" action="/login"><h1>Agent SIEM</h1><p>Ring Zero Security</p>${msg ? `<p class="err">${esc(msg)}</p>` : ''}<input name="password" type="password" autocomplete="current-password" placeholder="Password" autofocus required><input type="hidden" name="next"><button>Sign in</button></form>
+<script>document.querySelector('[name=next]').value = location.hash;</script>`;
 
 const secure = (req) => req.secure || req.headers['x-forwarded-proto'] === 'https';
 function setSession(req, res, payload) {
@@ -128,11 +129,12 @@ export function authMiddleware() {
     if (req.path === '/login' && req.method === 'POST') {
       const c = clientOf(req);
       if (locked(c)) return res.status(429).type('html').send(page('Too many attempts. Try again in 15 minutes.'));
-      const { password: pw = '' } = await readForm(req);
+      const { password: pw = '', next = '' } = await readForm(req);
       if (pw && same(pw, password())) {
         fails.delete(c);
         setSession(req, res, { role: 'admin', exp: Date.now() + ADMIN_TTL });
-        return res.redirect(303, '/');
+        // Back to the view the person asked for (a dashboard route only).
+        return res.redirect(303, '/' + (/^#\/[\w./%-]{0,120}$/.test(next) ? next : ''));
       }
       failed(c);
       return res.status(401).type('html').send(page('Wrong password.'));

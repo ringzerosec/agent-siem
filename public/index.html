@@ -796,7 +796,7 @@
     }
   }
   async function openDevice(id, keepFocus) {
-    state.device = id; if (!keepFocus) state.focus = null;
+    state.device = id; if (!keepFocus) state.focus = null; pushRoute();
     $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true; $('#pageTitle').textContent = id;
     let gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
     state.graph = gph;
@@ -1143,7 +1143,7 @@
   function closeDevice() {
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
     state.device = null; state.focus = null; state.graph = null;
-    $('#detail').hidden = true; $('#back').hidden = true; $('#pageTitle').textContent = TITLES[view] || '';
+    $('#detail').hidden = true; $('#back').hidden = true; $('#pageTitle').textContent = TITLES[view] || ''; pushRoute();
     if (state.net) { state.net.destroy(); state.net = null; }
     $('#nodeDetail').hidden = true; $('#nodehint').hidden = false;
     if (view === 'wall') refitTiles();
@@ -1240,7 +1240,7 @@
   const TITLES = { wall: 'Endpoints', events: 'Events', campaigns: 'Linked attacks', ai: 'AI usage', gov: 'Governance' };
   function setView(v) {
     view = v; for (const x of $('#view').children) x.classList.toggle('on', x.dataset.v === v);
-    $('#pageTitle').textContent = TITLES[v] || '';
+    $('#pageTitle').textContent = TITLES[v] || ''; pushRoute();
     if (v === 'events' && state.device) closeDevice();
     if ((v === 'campaigns' || v === 'ai' || v === 'gov') && state.device) closeDevice();
     $('#wall').hidden = v !== 'wall'; $('#events').hidden = v !== 'events'; $('#campaigns').hidden = v !== 'campaigns'; $('#ai').hidden = v !== 'ai'; $('#gov').hidden = v !== 'gov';
@@ -1476,7 +1476,40 @@
     }
     tick();
   }
+  // ---- routing ----------------------------------------------------------
+  // The URL says what is on screen (#/events, #/linked-attacks,
+  // #/endpoint/<id>), so Back and Forward switch views in place instead of
+  // reloading the app, and a view can be refreshed, bookmarked or shared.
+  // Hash routes: the server needs no changes.
+  const ROUTES = { wall: '', events: 'events', campaigns: 'linked-attacks', ai: 'ai-usage', gov: 'governance' };
+  let routing = false, routeTimer = null;
+  function routeOf() { return state.device ? `#/endpoint/${encodeURIComponent(state.device)}` : `#/${ROUTES[view] ?? ''}`; }
+  // One history entry per user step: a view switch that also closes an
+  // endpoint would otherwise push twice, so pushes are coalesced.
+  function pushRoute() {
+    if (routing) return;
+    clearTimeout(routeTimer);
+    routeTimer = setTimeout(() => { const r = routeOf(); if ((location.hash || '#/') !== r) history.pushState(null, '', r); }, 0);
+  }
+  async function applyRoute() {
+    clearTimeout(routeTimer); routing = true;
+    try {
+      const h = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
+      if (h.startsWith('endpoint/')) {
+        const id = h.slice('endpoint/'.length);
+        if (view !== 'wall') setView('wall');
+        if (state.device !== id) { if (state.device) closeDevice(); await openDevice(id); }
+      } else {
+        const v = Object.keys(ROUTES).find((k) => ROUTES[k] === h) || 'wall';
+        if (state.device) closeDevice();
+        if (view !== v) setView(v);
+      }
+    } finally { routing = false; }
+  }
+  window.addEventListener('popstate', () => { applyRoute(); });
+
   loadWall(); connectStream(); setInterval(() => loadWall(new Set()), 15000);
+  if (location.hash && location.hash !== '#/') applyRoute(); else history.replaceState(null, '', '#/');
 })();
 </script>
 </body>
