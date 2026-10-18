@@ -6,8 +6,8 @@ file read or written, program run, network connection, MCP tool call, skill
 loaded) is an edge. Detection rules are Cypher path queries. Two agents work on
 top of the graph:
 
-- a **triage agent** that investigates an alert across the graph, decides what
-  to do, acts, and cites the nodes and edges behind its verdict;
+- a **triage agent** that investigates an alert across the graph, recommends
+  what to do, and cites the nodes and edges behind its verdict;
 - **Pepper**, a voice security engineer you talk to. Say "Hey Pepper, what
   happened on the Payments laptop?" and it investigates out loud while it moves
   the screen to the attack path, and speaks up on its own when a new alert lands.
@@ -17,16 +17,16 @@ Built for the WeMakeDevs × FalkorDB **Graph Hacks** hackathon, Track 01
 
 ![Agent SIEM](docs/screenshot-wall.png)
 
-## What is real, what is simulated, what is queued
+## What is real and what is simulated
 
 Being precise about this matters for a security product:
 
 | | Status |
 |---|---|
-| **Enforcement on the endpoint** | Real, and done by the Ring Zero Security daemon (eBPF-LSM in the kernel), not by this console. "Blocked" / "contained" on the wall means the daemon refused that step. |
-| **Real endpoints** | Endpoints fed by an installed daemon through `src/adapter-rzs.js`: sessions, kernel and proxy events, narrative, and the daemon's **skill scanner**. In the demo: `BLD-LNX-0001` (a Lima VM) and `LAB-LNX-0002` (a VirtualBox VM). |
-| **Simulated endpoints** | Tagged **SIM** on the wall. `src/simulator.js` plays a fleet whose agents sometimes drift into credential exfiltration, untrusted MCP calls or a poisoned skill; all of them are refused, as in enforce mode. |
-| **Actions the agents take** (`block_host`, `contain_session`) | Recorded in the graph as `(:Action)` nodes and published on NATS as `rzs.actions.<device>`. **The daemon does not consume that subject yet**, so these do not change endpoint policy today. Tickets and verdicts are stored in the graph. |
+| **The data in the demo** | A **simulated fleet** of 12 laptops (each tagged **SIM**): `src/simulator.js` plays AI agents doing normal work that sometimes drift into credential exfiltration, untrusted MCP calls, shadow AI or a poisoned skill. No real company data. |
+| **Real endpoints** | Endpoints with the Ring Zero Security daemon installed feed the same pipeline through `src/adapter-rzs.js`: sessions, kernel and proxy events, narrative, and the daemon's skill scanner. |
+| **Enforcement** | Real, done by the Ring Zero Security daemon (eBPF LSM in the kernel), not by this console. Approved actions (block a host, contain a session, quarantine a skill) are sent to the daemon's verdict API and installed as kernel rules; verified on a Linux machine. On simulated endpoints they are recorded as *simulated*. |
+| **Who decides** | Investigations (the triage agent, the playbook, Pepper) only **recommend**. Nothing that changes an endpoint runs until a person approves it in **Approvals**. |
 
 ## Architecture
 
@@ -43,20 +43,23 @@ flowchart LR
   NATS -- graph-writer, batches of 200 --> FK[(FalkorDB<br/>provenance graph)]
   FK -- Cypher rules --> DET[detection, cached per session]
   DET --> UI[dashboard: wall, endpoint graph, events]
-  FK <-- MCP tools --> MCP[MCP server<br/>15 graph tools]
-  MCP --> TRI[triage agent<br/>Claude]
+  FK <-- MCP tools --> MCP[MCP server<br/>27 graph tools]
+  MCP --> TRI[triage agent<br/>Claude or playbook]
   MCP --> PEP[Pepper<br/>OpenAI GPT-Live + Responses]
   MCP --> EXT[any MCP client<br/>POST /mcp]
-  TRI -- actions --> NATS
+  FK -- findings --> BR[local decision model<br/>Vega]
+  TRI -- recommendations --> APR[Approvals<br/>a person says yes]
+  APR -- approved actions --> AD
+  AD -- verdict API --> D1
   PEP -- screen moves --> UI
 ```
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # set SIEM_TOKEN; API keys are optional
+cp .env.example .env          # set SIEM_TOKEN and SIEM_PASSWORD; API keys are optional
 docker compose up --build
-# open http://localhost:8080/?token=<SIEM_TOKEN>      FalkorDB browser: http://localhost:3000
+# open http://localhost:8080 and sign in with SIEM_PASSWORD   FalkorDB browser: http://localhost:3000
 ```
 
 This starts FalkorDB, NATS JetStream, the console and a 12-laptop simulator.
@@ -70,18 +73,87 @@ Without Docker:
 docker run -d --name falkordb -p 6379:6379 -p 3000:3000 falkordb/falkordb:latest
 docker run -d --name nats -p 4222:4222 nats:2.10-alpine -js
 npm install
-node --env-file=.env src/server.js     # prints the sign-in link
+node --env-file=.env src/server.js
 node --env-file=.env src/simulator.js  # in another terminal
 ```
 
 ### Access
 
-One shared token protects the dashboard, the whole API and `/mcp`: the console
-can block hosts, contain sessions and start paid voice sessions, so nothing is
-open by default. Programs send `Authorization: Bearer <SIEM_TOKEN>`; a browser
-opens `/?token=<SIEM_TOKEN>` once and gets an HttpOnly cookie. If `SIEM_TOKEN`
-is unset, the server generates one into `data/siem-token` (mode 600) and prints
-the sign-in link.
+Nothing is open by default: the console can block hosts, contain sessions and
+start paid voice sessions.
+
+- **People** sign in with the master password (`SIEM_PASSWORD`) and get a signed
+  session cookie (never the password). Five wrong tries lock that client out for
+  15 minutes.
+- **Read-only links** (Share & account → Create link) let someone explore every
+  screen, investigate and talk to Pepper; anything that changes state is refused
+  by the server. Links expire and can be revoked.
+- **Programs** (simulator, adapter, MCP clients) send
+  `Authorization: Bearer <SIEM_TOKEN>`.
+
+## The graph
+
+Everything is one FalkorDB graph in three layers: what agents did, what it means,
+and what people decided.
+
+```mermaid
+flowchart LR
+  subgraph Activity["What agents did (kernel and proxy events)"]
+    Device -- RUNS --> Session -- RAN_BY --> Agent
+    Session -- HAS --> Process
+    Process -- SPAWNED --> Process
+    Process -- "READ / WROTE / EXECUTED" --> File
+    Process -- "CONNECTED / SENT" --> Host -- RESOLVES_TO --> Ip
+    Process -- CALLED_AI --> AiService
+    Process -- USED_TOOL --> McpTool
+    Process -- INSTALLED --> Package -- HAS_VULN --> Vulnerability
+    Device -- DECLARES --> McpServer
+    Device -- HAS_SKILL --> Skill -- SIGNATURE --> SkillSig
+    Person -- USES --> Device
+  end
+  subgraph Meaning["What it means"]
+    Finding -- INVOLVES --> Host
+    Finding -- INVOLVES --> Skill
+    Finding -- INVOLVES --> McpTool
+    Finding -- USES_TECHNIQUE --> Technique
+  end
+  subgraph Decisions["What people decided"]
+    Device -- DECISION --> Decision -- ESCALATED --> Escalation
+    Device -- ACTION --> Action
+    Device -- TRIAGED --> Triage
+    Device -- POSTURE --> Posture
+  end
+```
+
+Every alert, verdict and action points back at the nodes and edges it came from,
+so any decision can be explained by walking the graph.
+
+![Linked attacks: findings on 12 laptops grouped by the infrastructure they share](docs/screenshot-linked-attacks.png)
+
+### Where the decisions come from
+
+| Question | How the graph answers it |
+|---|---|
+| Is this exfiltration? | A multi-hop Cypher path: secret **READ** → **WROTE** → any descendant (**SPAWNED*0..4**) **CONNECTED** to an unapproved host (below). 21 rules in `src/detect.js` are graph queries like it. |
+| Is this one attack across many laptops? | `algo.WCC` over findings and the infrastructure they **INVOLVE**: hosts, the IPs they **RESOLVE_TO**, skill signatures, MCP tools. Two laptops sending secrets to the same server, or loading the same poisoned skill, land in one **linked attack**; a new domain on a known attack server is flagged on first contact. Well-known services (AI providers, big clouds) link through `USES_SERVICE`, which the algorithm does not follow, so they never glue attacks together. |
+| How important is this host or secret? | `algo.pageRank` over the whole graph ranks sensitive files and routable hosts (the `fleet_risk_rank` tool). |
+| Did the secret go anywhere else? | `secret_followups` and `host_fleet_exposure`: every reader of the same file across the fleet and what each connected to afterwards. |
+| Which processes are the same thing? | The endpoint view groups processes by program and parent program (`python3 ×47`) and merges a host with its AI service, straight from the **SPAWNED** and **CALLED_AI** edges. |
+| What did a person approve, and when? | `Decision`, `Action` and `Escalation` nodes: the audit trail behind Approvals and the ISO/IEC 42001 evidence. |
+
+```cypher
+// Linked attacks
+CALL algo.WCC({nodeLabels: ['Finding', 'Host', 'McpTool', 'Skill', 'SkillSig', 'Ip'],
+               relationshipTypes: ['INVOLVES', 'RESOLVES_TO', 'SIGNATURE']})
+YIELD node, componentId
+WITH node, componentId WHERE node:Finding
+RETURN componentId, collect(node) AS findings
+
+// Risk rank
+CALL algo.pageRank(NULL, NULL) YIELD node, score
+WITH node, score WHERE (node:File AND node.sensitive = true) OR node:Host
+RETURN node, score ORDER BY score DESC LIMIT 10
+```
 
 ## Why a graph
 
@@ -112,17 +184,20 @@ Every alert has **Investigate with agent**. The agent is an MCP client of the
 graph's MCP server; Claude chooses the tools. A typical run walks the alert path,
 checks who else in the fleet read the same secret and whether it left anywhere,
 checks whether the host was contacted from other endpoints, ranks the assets with
-PageRank, then acts on what the graph showed: no block when the daemon already
-refused the step, a credential-rotation ticket when a secret was read, a
-fleet-wide block when several endpoints hit the same host. Its verdict cites node
-and edge ids, and the panel shows every step: why it called a tool, what came
-back, what it did. Default model `claude-opus-5-5`; if a model declines partway
-(Claude Fable 5.1's dual-use safeguards do on exfiltration evidence), the run
-continues on the fallback model and says so.
+PageRank, then recommends what the graph showed: no block when the daemon
+already refused the step, a credential-rotation ticket when a secret was read,
+blocking the host (fleet-wide when several endpoints hit it) and containing the
+session when it got through. Blocks and containment are **recommendations** that
+land in Approvals; it never blocks `localhost` or private addresses. Its verdict
+cites node and edge ids, and the panel shows every step: why it called a tool,
+what came back, what it recommended. With `ANTHROPIC_API_KEY` it runs on Claude
+(default `claude-opus-5-5`; if a model declines partway, the run continues on a
+fallback and says so); without it, a fixed playbook runs over the same tools and
+its verdict says it is rule-based.
 
 ### Pepper, the voice security engineer (OpenAI)
 
-**Pepper** in the header. Say **"Hey Pepper"** or press Talk, and talk normally;
+**Pepper** in the sidebar. Say **"Hey Pepper"** or press Talk, and talk normally;
 interrupt it any time. Pepper:
 
 - answers within about a second and thinks out loud: every tool result becomes a
@@ -160,12 +235,12 @@ claude mcp add --transport http agent-siem http://localhost:8080/mcp \
 
 | Tool | Kind |
 |---|---|
-| `list_alerts`, `get_alert`, `investigate_alert`, `process_timeline`, `blast_radius`, `host_fleet_exposure`, `secret_followups`, `mcp_and_skills`, `ai_usage`, `indicator_intel`, `fleet_inventory`, `iso42001_readiness`, `list_decisions`, `run_readonly_cypher` | read-only Cypher |
-| `list_campaigns` | graph algorithm (FalkorDB `algo.WCC`) |
+| `fleet_summary`, `list_alerts`, `get_alert`, `investigate_alert`, `process_timeline`, `blast_radius`, `host_fleet_exposure`, `secret_followups`, `mcp_and_skills`, `ai_usage`, `indicator_intel`, `fleet_inventory`, `iso42001_readiness`, `list_decisions`, `scan_status`, `run_readonly_cypher` | read-only Cypher |
+| `list_campaigns` (linked attacks) | graph algorithm (FalkorDB `algo.WCC`) |
 | `list_playbooks` | local decision model (Vega) |
 | `run_deep_scan`, `propose_policies`, `approve_decision`, `dismiss_decision` | fleet actions (proposals need a yes) |
 | `fleet_risk_rank` | graph algorithm (FalkorDB `algo.pageRank`) |
-| `block_host`, `contain_session`, `open_ticket`, `mark_false_positive` | actions (approved hosts are never blocked) |
+| `block_host`, `contain_session`, `quarantine_skill`, `open_ticket`, `mark_false_positive` | actions: recommendations inside an investigation; approved, local and private hosts are never blocked |
 | `submit_verdict` | verdict stored on the alert |
 
 ## Shadow AI discovery
@@ -183,11 +258,23 @@ from the local decision model. Alerts: data to an unapproved AI service, a
 secret sent to one, and unregistered agents. The daemon change that feeds this
 from real endpoints is specified in `docs/shadow-ai-daemon-spec.md`.
 
+## Approvals
+
+Every alert that needs a person ends up here, with the investigation's summary and
+the proposed next steps: block a host, contain a session, quarantine a skill,
+email the owner, or a policy. Waiting / Approved / Dismissed tabs, filters by kind
+and endpoint, and for each decided item who decided, when, and what ran.
+**Linked attacks** adds "Block on every endpoint" and "Quarantine skill on every
+endpoint"; skill alerts have "Quarantine skill" (it blocks exactly the files the
+scanner flagged). All of them ask for a second click to confirm.
+
+![Approvals](docs/screenshot-approvals.png)
+
 ## Autopilot: the proactive loop
 
 A new critical or high finding is investigated on its own (the triage
 playbook, or Claude with `AUTOPILOT_AGENT=claude`; one at a time, capped per
-hour). The result lands in the **Inbox** as a decision with the endpoint's
+hour). The result lands in **Approvals** as a decision with the endpoint's
 owner and the proposed next step, typically an escalation email to the
 employee with their manager in cc. Pepper raises it out loud ("An agent on
 Elena's laptop sent data to DeepSeek. Should I email her?"). Nothing with
@@ -201,7 +288,7 @@ every endpoint; the adapter runs the daemon's read-only scanners (skills,
 non-human identities, health, posture, supply chain, its compliance
 self-assessment) and reports back. The fleet inventory shows per endpoint the
 owner, agents, AI services, unregistered agents, MCP servers, skills and
-posture. **Propose policies** turns what was found into decisions in the Inbox
+posture. **Propose policies** turns what was found into decisions in Approvals
 (block unapproved AI services, remove untrusted MCP servers, quarantine flagged
 skills, register unregistered agents). **ISO/IEC 42001 readiness** maps the
 graph's evidence to Annex A areas A.2 to A.10 with the gaps to close. It is
@@ -214,10 +301,11 @@ default, Laya as a fallback); nothing is sent to an outside AI provider. It
 labels each finding with an attack technique and a priority (stored only when
 it does not abstain), groups findings into **playbooks** (the same technique
 across endpoints, even with different infrastructure), and gives a second
-opinion on borderline AI traffic. Measured on an M5: about 0.2 to 0.5 s per
-request. Zero-shot pairwise "same actor" linking was not reliable enough, so it
-does not create campaign links; fine-tuning on our own labelled findings is the
-next step.
+opinion on borderline AI traffic. Measured on an Apple M5 CPU: about 130 ms
+per decision once warm. It runs alongside the stream, so nothing waits on it.
+Zero-shot pairwise "same actor" linking was not reliable enough, so it does not
+create linked-attack groups; fine-tuning on our own labelled findings is the next
+step.
 
 ```bash
 brain/run.sh        # 127.0.0.1:7811; the console uses it when it is running
@@ -242,10 +330,14 @@ critical config (prompt injection, hidden instructions, MCP tool poisoning).
 | secret-to-write-to-egress | T5 | critical | secret read, written into another file, then the tree connects out |
 | mcp-untrusted-call | T3 | critical | tool call to an untrusted or held MCP server went through |
 | mcp-untrusted-then-egress | T5 | critical | untrusted MCP call, then a connection to an unapproved host |
+| secret-to-shadow-ai | T2 | critical | secret read, then the tree sent data to an unapproved AI service |
+| linked-to-campaign-infra | T5 | critical | connection to a host on the same server (IP) as a host used in an attack on another endpoint |
 | flagged-skill-loaded | T1 | critical | an agent read or ran files inside a skill the scanner flagged |
 | tamper | T8 | critical | ptrace / signal / mount attempt on a contained process or the daemon |
 | skill-flagged | T1 / T3 | by finding | skill, plugin, rule file or MCP config flagged by the skill scanner |
 | mcp-untrusted-call-blocked | T3 | high | a call to an untrusted MCP server was refused |
+| shadow-ai | T5 | high | data sent to an AI service that is not approved (recognized by protocol, not hostname) |
+| unregistered-ai-agent | T7 | high | a process that is not a known agent is calling an AI API |
 | vulnerable-package | T3 | high | installed package has Google OSV advisories |
 | privilege-tool | T4 | high | `sudo`, `su`, `pkexec`, `doas`, `run0`, `systemd-run`, `at`, `crontab` |
 | instruction-file-write | T1 | high | agent rewrote `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `SKILL.md`… |
@@ -303,8 +395,9 @@ All routes need the token.
 
 ## Limitations
 
-- Agent actions are not yet enforced on the endpoint (see the table at the top).
-- One shared token, no per-user accounts or audit of who acted.
+- The demo fleet is simulated (see the table at the top); kernel enforcement was
+  verified on a real Linux endpoint, not on the simulated laptops.
+- One master password plus read-only links; no per-user accounts yet.
 - Detection results are cached per session and recomputed on new events; the
   first start over a large history takes a minute to fill in.
 - The wake word needs Chrome. No automated tests yet.
