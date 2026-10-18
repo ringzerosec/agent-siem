@@ -488,6 +488,7 @@
       <button class="btn sm" id="whole" hidden>← whole device</button>
       <button class="btn sm" id="fit">Fit</button>
       <button class="btn sm" id="spotClear" hidden>Show whole graph</button>
+      <button class="btn sm" id="groupBtn" title="Repeated processes and duplicate nodes are drawn once; double-click a group to open it">Expand all</button>
       <button class="btn sm" id="pathsOnly" title="Endpoints with alerts open on their attack paths" aria-pressed="false">Alert paths only</button>
     </div>
     <div id="graph"></div>
@@ -598,6 +599,8 @@
     pkg:     svg(`<path d="M32 14l16 8v18l-16 8-16-8V22z" fill="${INK}"/><path d="M32 30l16-8M32 30L16 22M32 30v18" stroke="#6b7280" stroke-width="3"/>`, '#6b7280'),
     pkgbad:  svg(`<path d="M32 14l16 8v18l-16 8-16-8V22z" fill="${INK}"/><path d="M32 30l16-8M32 30L16 22M32 30v18" stroke="#dc2626" stroke-width="3"/>`, '#dc2626'),
     vuln:    svg(`<path d="M32 12l20 36H12z" fill="${INK}"/><rect x="30" y="24" width="4" height="12" rx="2" fill="#dc2626"/><circle cx="32" cy="41" r="2.5" fill="#dc2626"/>`, '#dc2626'),
+    ai:      svg(`<path d="M32 15l4.2 11.8L48 31l-11.8 4.2L32 47l-4.2-11.8L16 31l11.8-4.2z" fill="${INK}"/>`, '#7c3aed'),
+    badai:   svg(`<path d="M32 15l4.2 11.8L48 31l-11.8 4.2L32 47l-4.2-11.8L16 31l11.8-4.2z" fill="${INK}"/>`, '#dc2626'),
     tamper:  svg(`<path d="M32 12l18 8v12c0 11-8 18-18 22-10-4-18-11-18-22V20z" fill="${INK}"/><path d="M26 26l12 12M38 26L26 38" stroke="#dc2626" stroke-width="4" stroke-linecap="round"/>`, '#dc2626'),
   };
   const isAgent = (name) => /claude|cursor|codex|gemini|agent|copilot|aider/i.test(name || '');
@@ -612,6 +615,7 @@
     if (n.labels.includes('Vulnerability')) return ICON.vuln;
     if (n.labels.includes('McpServer')) return p.approved ? ICON.tool : ICON.badtool;
     if (n.labels.includes('Tamper')) return ICON.tamper;
+    if (n.labels.includes('AiService')) return p.approved ? ICON.ai : ICON.badai;
     return ICON.file;
   }
   function label(n) {
@@ -625,6 +629,7 @@
     if (n.labels.includes('Vulnerability')) return p.id;
     if (n.labels.includes('McpServer')) return `mcp:${p.name}`;
     if (n.labels.includes('Tamper')) return p.what;
+    if (n.labels.includes('AiService')) return p.provider ? `${p.provider}\n${p.host}` : p.host;
     return p.id || p.name || String(n.id);
   }
   function level(n) {
@@ -656,7 +661,7 @@
       // light up dozens of identical labels ("called_ai" x 40).
       chosen: mini ? false : { edge: true, label: (v, id, selected, hovering) => { if (hovering) v.size = 10; } },
       color: onEdge.has(e.id) ? { color: '#dc2626', highlight: '#dc2626' } : { color: e.properties?.allowed === false ? '#d97706' : edge, highlight: '#01696f' },
-      width: onEdge.has(e.id) ? (mini ? 2 : 3) : 1, dashes: e.properties?.allowed === false,
+      width: (onEdge.has(e.id) ? (mini ? 2 : 3) : 1) + (e.properties?.count > 1 ? Math.min(3, Math.log2(e.properties.count)) : 0), dashes: e.properties?.allowed === false,
     }));
     return { vnodes, vedges };
   }
@@ -817,9 +822,64 @@
   }
 
   // ---- device detail ----------------------------------------------------
+  // Repeated processes (same name, same parent; 3 or more) become one node,
+  // "node ×34", and their edges merge into one ("called_ai ×34"), so a hub
+  // is not buried under dozens of identical nodes and arrowheads. Agents are
+  // never grouped. "Show every process" turns it off.
+  function groupProcesses(nodes, edges, alerts) {
+    const byId = new Map(nodes.map((n) => [n.id, n])), parent = new Map();
+    for (const e of edges) if (e.relationshipType === 'SPAWNED') parent.set(e.destinationId, e.sourceId);
+    const buckets = new Map();
+    for (const n of nodes) {
+      if (!n.labels.includes('Process') || isAgent(n.properties?.name)) continue;
+      const k = `${n.properties?.name}|${parent.get(n.id) ?? '-'}`;
+      (buckets.get(k) || buckets.set(k, []).get(k)).push(n);
+    }
+    const of = new Map(), members = new Map(), gnode = new Map();
+    for (const [k, list] of buckets) {
+      if (list.length < 3 || state.expanded?.has('g:' + k)) continue;
+      const gid = 'g:' + k, name = list[0].properties.name;
+      const g = { id: gid, labels: ['Process'], properties: { name, pid: `×${list.length}`, group: true, count: list.length, pids: list.map((x) => x.properties.pid).join(', ') } };
+      gnode.set(gid, g); members.set(gid, list.map((x) => x.id)); for (const x of list) of.set(x.id, gid);
+    }
+    // Duplicates: the same API seen as a host (connected) and as an AI service
+    // (called_ai) is one thing; draw it once, as the AI service.
+    const aiByHost = new Map(nodes.filter((n) => n.labels.includes('AiService')).map((n) => [n.properties?.host, n.id]));
+    for (const n of nodes) {
+      const ai = n.labels.includes('Host') && aiByHost.get(n.properties?.name);
+      if (ai != null && ai !== false && !state.expanded?.has(ai)) { of.set(n.id, ai); members.set(ai, [...(members.get(ai) || [ai]), n.id]); }
+    }
+    if (!of.size) { state.grp = null; return { nodes, edges, alerts }; }
+    const edgeOf = new Map(), merged = new Map(), out = [];
+    for (const e of edges) {
+      const f = of.get(e.sourceId) ?? e.sourceId, t = of.get(e.destinationId) ?? e.destinationId;
+      if (f === e.sourceId && t === e.destinationId) { out.push(e); continue; }
+      if (f === t) continue;
+      const k = `ge:${f}|${t}|${e.relationshipType}`;
+      let m = merged.get(k);
+      if (!m) { m = { id: k, sourceId: f, destinationId: t, relationshipType: e.relationshipType, properties: { count: 0, refused: 0 } }; merged.set(k, m); }
+      m.properties.count++; if (e.properties?.allowed === false) m.properties.refused++;
+      edgeOf.set(e.id, k);
+    }
+    for (const m of merged.values()) {
+      if (m.properties.count > 1) m.relationshipType = `${m.relationshipType} ×${m.properties.count}`;
+      m.properties.allowed = m.properties.refused === m.properties.count ? false : undefined;
+      out.push(m);
+    }
+    state.grp = { of, edgeOf, members, node: gnode };
+    const mapA = (a) => ({ ...a, nodes: [...new Set(a.nodes.map((id) => of.get(id) ?? id))], edges: [...new Set(a.edges.map((id) => edgeOf.get(id) ?? id))] });
+    return { nodes: [...nodes.filter((n) => !of.has(n.id)), ...gnode.values()], edges: out, alerts: alerts.map(mapA) };
+  }
+  function expandGroup(id) {
+    (state.expanded ||= new Set()).add(id);
+    if (state.device) { if (state.net) state.net.destroy(); state.net = null; openDevice(state.device, true); }
+  }
+  // Translate an attack's node/edge ids to what is drawn (groups).
+  const drawnIds = (a) => !state.grp || !a ? a : { ...a, nodes: [...new Set(a.nodes.map((id) => state.grp.of.get(id) ?? id))], edges: [...new Set(a.edges.map((id) => state.grp.edgeOf.get(id) ?? id))] };
   function render(nodes, edges, alerts, title) {
+    if (state.groupProcs !== false) ({ nodes, edges, alerts } = groupProcesses(nodes, edges, alerts)); else state.grp = null;
     const { vnodes, vedges } = toVis(nodes, edges, alerts.filter((a) => a.severity !== 'info'), false);
-    $('#title').innerHTML = title;
+    $('#title').innerHTML = title + (state.grp ? ` · <span class="dim" title="Repeated processes and duplicates are grouped; double-click a group to open it">${nodes.length} shown</span>` : '');
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
@@ -838,7 +898,7 @@
         else state.net.unselectAll();
         state.net.fit({ animation: false });
       });
-      state.net.on('doubleClick', (p) => { if (p.nodes.length) focusNode(p.nodes[0]); });
+      state.net.on('doubleClick', (p) => { if (!p.nodes.length) return; if (state.grp?.members.has(p.nodes[0])) expandGroup(p.nodes[0]); else focusNode(p.nodes[0]); });
       state.net.on('afterDrawing', drawFlow);
     } else {
       const have = new Set(state.nodes.getIds());
@@ -851,6 +911,7 @@
     }
   }
   async function openDevice(id, keepFocus) {
+    if (state.device !== id) state.expanded = new Set();
     state.device = id; if (!keepFocus) state.focus = null; pushRoute();
     $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true; $('#pageTitle').textContent = id;
     let gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
@@ -1140,6 +1201,7 @@
   // view zooms to the chain. Passing null restores the whole graph.
   function spotlight(a) {
     if (!state.net) return;
+    a = drawnIds(a);
     state.spot = a?.id || null;
     const keepN = new Set(a ? a.nodes : []), keepE = new Set(a ? a.edges : []);
     state.nodes.update(state.nodes.get().map((n) => ({ id: n.id, opacity: !a || keepN.has(n.id) ? 1 : 0.3, font: { ...(n.font || {}), color: !a || keepN.has(n.id) ? css('--label') : 'rgba(0,0,0,0.3)' } })));
@@ -1178,7 +1240,7 @@
     const actors = [...nodes].filter(actor);
     for (const e of g.edges) if (actors.includes(e.destinationId) && actor(e.sourceId)) { edges.add(e.id); nodes.add(e.sourceId); }
     // On "attack paths only" the item may not be drawn: show everything first.
-    if ([...nodes].some((id) => !state.nodes.get(id)) && state.pathsOnly) {
+    if ([...nodes].map((id) => state.grp?.of.get(id) ?? id).some((id) => !state.nodes.get(id)) && state.pathsOnly) {
       state.pathsOnly = false; state.pathsAuto = false;
       if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); } state.net = null;
       await openDevice(state.device, true);
@@ -1290,9 +1352,9 @@
     state.selectedNode = id;
     // The node's attacks come from the graph already on screen, so the card
     // shows even if the details request is slow or fails.
-    let d = null; try { const r = await fetch(`/api/node/${id}`); if (r.ok) d = await r.json(); } catch {}
+    let d = null; if (!String(id).startsWith('g:')) try { const r = await fetch(`/api/node/${id}`); if (r.ok) d = await r.json(); } catch {}
     if (state.selectedNode !== id) return;
-    const local = state.graph?.nodes.find((x) => x.id === id);
+    const local = state.graph?.nodes.find((x) => x.id === id) || state.grp?.node.get(id);
     d = d?.node ? d : { node: local, timeline: [], radius: null };
     if (!d.node) return;
     const n = d.node; const p = n.properties || {};
@@ -1300,7 +1362,8 @@
     // Lead with the attacks this node is part of: that is what a click on a
     // red node is asking.
     const rank = { critical: 0, high: 1, medium: 2, low: 3 };
-    const rel = (state.graph?.alerts || []).filter((a) => a.severity !== 'info' && a.nodes.includes(id)).sort((x, y) => (rank[x.severity] ?? 4) - (rank[y.severity] ?? 4));
+    const members = state.grp?.members.get(id) || [id];
+    const rel = (state.graph?.alerts || []).filter((a) => a.severity !== 'info' && members.some((m) => a.nodes.includes(m))).sort((x, y) => (rank[x.severity] ?? 4) - (rank[y.severity] ?? 4));
     let extra = '';
     if (n.labels.includes('Vulnerability')) {
       extra = `<div class="adv"><div class="row"><span class="id">${esc(p.id)}</span>${sevBadge(p.severity || 'unknown')}${(p.aliases || '').split(',').filter(Boolean).map((c) => `<span class="badge outline">${esc(c)}</span>`).join('')}<a href="${esc(p.url || '')}" target="_blank" rel="noopener">osv.dev ↗</a></div>${p.summary ? `<div class="sum">${esc(p.summary)}</div>` : ''}${p.fixed ? `<div class="fix">Fixed in <b>${esc(String(p.fixed).split(',')[0])}</b></div>` : ''}${p.details ? `<div class="sum dim" style="margin-top:6px;white-space:pre-wrap">${esc(p.details)}</div>` : ''}${p.cvss ? `<div class="fix dim">${esc(p.cvss)}</div>` : ''}</div>`;
@@ -1323,6 +1386,11 @@
     $('.side').scrollTop = 0;
     $('#focusBtn').onclick = () => focusNode(id);
     if (!d.radius) $('#radiusBtn').disabled = true;
+    if (String(id).startsWith('g:')) $('#focusBtn').disabled = true;
+    if (state.grp?.members.has(id)) {
+      const ex = document.createElement('button'); ex.className = 'btn sm primary'; ex.textContent = String(id).startsWith('g:') ? `Expand this group (${state.grp.members.get(id).length})` : 'Show as separate nodes';
+      ex.onclick = () => expandGroup(id); $('#focusBtn').parentElement.prepend(ex);
+    }
     $('#radiusBtn').onclick = () => { if (!d.radius) return; state.focus = id; $('#whole').hidden = false; render(d.radius.nodes.concat([n]), d.radius.edges, state.graph?.alerts || [], `blast radius of <b>${esc(label(n).replace('\n', ' '))}</b> · ${d.radius.nodes.length} reachable`); };
   }
   async function focusNode(id) {
@@ -1603,6 +1671,10 @@
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && fitReadable(state.net);
   $('#spotClear').onclick = () => { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); };
+  $('#groupBtn').onclick = () => {
+    state.groupProcs = state.groupProcs === false; state.expanded = new Set(); $('#groupBtn').textContent = state.groupProcs === false ? 'Group duplicates' : 'Expand all';
+    if (state.device) { if (state.net) { state.net.destroy(); } state.net = null; openDevice(state.device, true); }
+  };
   $('#pathsOnly').onclick = () => { state.pathsOnly = !state.pathsOnly; state.pathsAuto = false; if (state.device) { if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); } state.net = null; openDevice(state.device, true); } };
   // Header counters filter the wall: critical, high (includes critical), or everything.
   document.querySelectorAll('button.stat[data-sev]').forEach((b) => b.onclick = () => {
