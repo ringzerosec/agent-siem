@@ -127,7 +127,9 @@
   .camp .cta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
   .camp .cta .ctamsg { font-size: 11.5px; }
   .btn.primary.danger { background: var(--destructive); border-color: var(--destructive); }
-  body.readonly [data-block] { display: none !important; }
+  body.readonly [data-block], body.readonly [data-quar], body.readonly [data-quarc] { display: none !important; }
+  #surface .row .qact { grid-column: 1 / -1; margin-top: 6px; }
+  #surface .row .qtag { grid-column: 1 / -1; margin-top: 6px; font: 600 11px var(--mono); color: var(--primary); }
   .camp-graph { position: sticky; top: 0; }
   #campNet { height: min(640px, calc(100vh - 220px)); background: var(--canvas); }
   @media (max-width: 900px) { #campaigns .camp-body { grid-template-columns: 1fr; } }
@@ -431,7 +433,7 @@
   <div class="brand"><div class="mark">R0</div><div><h1>Agent SIEM</h1><div class="sub">Ring Zero Security</div></div></div>
   <nav class="seg" id="view" aria-label="Views"><button data-v="wall" class="on"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Wall</span></button><button data-v="events"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Events</span></button><button data-v="campaigns"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.8 7.8 10.6 16M16.2 7.8 13.4 16M8.5 6h7"/></svg><span>Linked attacks</span></button><button data-v="ai"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 10h4v4h-4z"/></svg><span>AI usage</span></button><button data-v="gov"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span>Governance</span></button></nav>
   <div class="nav-sep"></div>
-  <button class="btn sm" id="inboxBtn" title="Analyses autopilot finished, waiting for your yes"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Inbox</span> <span class="badge outline" id="inboxCount">0</span></button>
+  <button class="btn sm" id="inboxBtn" title="Alerts investigated automatically; each waits for you to approve or dismiss it"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Inbox</span> <span class="badge outline" id="inboxCount">0</span></button>
   <button class="btn sm" id="zeroBtn" title="Pepper, your voice security engineer"><span class="zdot"></span><span id="zeroBtnTxt">Pepper</span></button>
   <span class="spacer"></span>
   <span class="badge warning" id="roBadge" hidden title="Signed in with a demo link: you can look at everything and talk to Pepper, but blocking, containing and approving need an admin">Read-only demo</span>
@@ -527,13 +529,13 @@
         <div class="node" id="nodeDetail" hidden></div>
       </div>
     </div>
-    <div class="card" id="surfaceCard">
-      <div class="card-header"><h2 class="sec">AI, MCP &amp; skills <span class="dim">· what the agents use and load</span></h2><span class="badge outline" id="surfaceCount">0</span></div>
-      <div id="surface"></div>
-    </div>
     <div class="card">
       <div class="card-header"><h2 class="sec">Alerts by threat <span class="dim">· click to expand</span></h2><span class="badge outline" id="alertCount">0</span></div>
       <div class="frame" id="alerts"></div>
+    </div>
+    <div class="card" id="surfaceCard">
+      <div class="card-header"><h2 class="sec">AI, MCP &amp; skills <span class="dim">· what the agents use and load</span></h2><span class="badge outline" id="surfaceCount">0</span></div>
+      <div id="surface"></div>
     </div>
     <div class="card" id="triageCard" hidden>
       <div class="card-header"><h2 class="sec">Triage agent <span class="dim" id="triageMode"></span></h2><span class="badge outline" id="triageStatus"></span></div>
@@ -547,7 +549,7 @@
 </div>
 
 <section id="inbox" hidden aria-label="Decision inbox">
-  <div class="ih"><b>Inbox</b><span class="dim">analyses finished on their own, waiting for a yes</span><span class="sp"></span><button class="btn sm" id="inboxClose" aria-label="Close">×</button></div>
+  <div class="ih"><b>Inbox</b><span class="dim">investigated automatically · approve or dismiss each</span><span class="sp"></span><button class="btn sm" id="inboxClose" aria-label="Close">×</button></div>
   <div id="inboxList"></div>
 </section>
 <section id="share" hidden aria-label="Share a read-only link">
@@ -666,7 +668,7 @@
       id: e.id, from: e.sourceId, to: e.destinationId, label: mini ? undefined : e.relationshipType.toLowerCase(),
       // Edge labels only where they tell the story (the attack path); the rest
       // show on hover or when a node is selected, so labels do not pile up.
-      arrows: { to: { enabled: false } }, font: { color: css('--muted-foreground'), size: onEdge.has(e.id) ? 10 : 0, align: 'middle', strokeWidth: 3, strokeColor: css('--canvas') },
+      arrows: { to: { enabled: false } }, font: { color: css('--muted-foreground'), size: 0, align: 'middle', strokeWidth: 3, strokeColor: css('--canvas') },
       // Label on hover of the edge itself only: selecting a hub would otherwise
       // light up dozens of identical labels ("called_ai" x 40).
       chosen: mini ? false : { edge: true, label: (v, id, selected, hovering) => { if (hovering) v.size = 10; } },
@@ -845,7 +847,9 @@
     const buckets = new Map();
     for (const n of nodes) {
       if (!n.labels.includes('Process') || isAgent(n.properties?.name)) continue;
-      const k = `${n.properties?.name}|${parent.get(n.id) ?? '-'}`;
+      // Same program started by the same kind of parent (all python3 run by
+      // any claude-code) is one group: agents spawn many short-lived copies.
+      const par = byId.get(parent.get(n.id)); const k = `${n.properties?.name}|${par?.properties?.name ?? '-'}`;
       (buckets.get(k) || buckets.set(k, []).get(k)).push(n);
     }
     const of = new Map(), members = new Map(), gnode = new Map();
@@ -1298,7 +1302,7 @@
       const skills = d.skills.map((k) => {
         const bad = ['high', 'critical'].includes(k.risk), warn = k.risk === 'medium';
         return `<div class="row focusable ${bad ? 'bad' : warn ? 'warn' : ''}" data-focus="skill" data-key="${esc(k.path)}" title="Show this in the graph"><span class="n" title="${esc(k.path)}">${esc(k.kind)} · ${esc(String(k.path).split('/').filter(Boolean).pop())}</span><span class="badge ${bad ? 'destructive' : warn ? 'warning' : 'success'}">${esc(k.risk)}</span>
-          <span class="m">${esc(k.agent)} · ${esc(k.path)}${k.findings?.length ? '<br>' + k.findings.slice(0, 2).map((f) => esc(`${f.category}: ${f.message}`)).join('<br>') : ''}</span></div>`;
+          <span class="m">${esc(k.agent)} · ${esc(k.path)}${k.findings?.length ? '<br>' + k.findings.slice(0, 2).map((f) => esc(`${f.category}: ${f.message}`)).join('<br>') : ''}</span>${k.quarantined ? `<span class="qtag" title="${esc((() => { try { return JSON.parse(k.quarantined_files || '[]').join('\n'); } catch { return ''; } })())}">quarantined · ${(() => { try { const n = JSON.parse(k.quarantined_files || '[]').length; return n ? `${n} file${n > 1 ? 's' : ''} blocked` : 'blocked'; } catch { return 'blocked'; } })()}</span>` : bad ? `<span class="qact"><button class="btn sm" data-quar="${esc(k.path)}">Quarantine</button></span>` : ''}</div>`;
       }).join('') || '<div class="empty">No skill scan from this endpoint yet.</div>';
       const ai = await (await fetch(`/api/ai-usage?device=${encodeURIComponent(id)}`)).json();
       const aiRows = ai.map((r) => `<div class="row focusable ${r.approved ? '' : 'bad'}" data-focus="ai" data-key="${esc(r.host)}" title="Show this AI service in the graph"><span class="n">${esc(r.host)}</span><span class="badge ${r.approved ? 'success' : 'destructive'}">${r.approved ? 'approved' : 'shadow'}</span>
@@ -1313,6 +1317,14 @@
       } catch {}
       $('#surface').innerHTML = `${actRows}<div class="sh">AI services</div>${aiRows}<div class="sh">MCP servers</div>${mcp}<div class="sh">Skills, plugins, rules, configs</div>${skills}`;
       $('#surface').querySelectorAll('[data-focus]').forEach((row) => row.onclick = () => focusSurface(row.dataset.focus, row.dataset.key, row));
+      $('#surface').querySelectorAll('[data-quar]').forEach((btn) => btn.onclick = (ev) => {
+        ev.stopPropagation();
+        confirmThen(btn, 'Confirm: quarantine', async () => {
+          const r = await (await fetch('/api/skills/quarantine', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: id, path: btn.dataset.quar }) })).json();
+          if (r.error || r.refused?.length) throw new Error(r.error || r.refused[0]);
+          loadSurface(id);   // the row now shows 'quarantined' and the blocked files
+        });
+      });
     } catch { $('#surface').innerHTML = '<div class="empty">Could not load.</div>'; }
   }
   // Back on the wall: tiles laid out while it was hidden were not fitted
@@ -1607,11 +1619,17 @@
       <div class="cm">${c.findings} findings · ${c.blocked} blocked · ${esc(c.threats.join(' '))} · last ${ago(c.last)}</div>
       <div class="ci">${c.indicators.hosts.slice(0, 4).map((h) => `<span>${esc(h)}</span>`).join('')}${c.indicators.hosts.length > 4 ? `<span title="${esc(c.indicators.hosts.slice(4).join(', '))}">+${c.indicators.hosts.length - 4} hosts</span>` : ''}${c.indicators.ips.length ? `<span class="ip" title="${esc(c.indicators.ips.join(', '))}">${c.indicators.ips.length} IP${c.indicators.ips.length > 1 ? 's' : ''}</span>` : ''}${c.indicators.skills.map((h) => `<span class="sk">skill: ${esc(h)}</span>`).join('')}${c.indicators.mcp_tools.map((h) => `<span class="sk">mcp: ${esc(h)}</span>`).join('')}</div>
       <div class="eps">${c.endpoints.slice(0, 4).map((d) => `<button data-dev="${esc(d)}">${esc(d)}</button>`).join('')}${c.endpoints.length > 4 ? `<span class="dim" style="font-size:11px;align-self:center" title="${esc(c.endpoints.slice(4).join(', '))}">+${c.endpoints.length - 4} more</span>` : ''}</div>
-      <div class="cta">${c.indicators.hosts.length ? `<button class="btn sm primary" data-block="${esc(c.id)}" data-n="${c.indicators.hosts.length}">Block ${c.indicators.hosts.length} host${c.indicators.hosts.length > 1 ? 's' : ''} on every endpoint</button>` : ''}<button class="btn sm" data-inv="${esc(c.id)}">Investigate</button><span class="ctamsg dim"></span></div></div>`).join('')
+      <div class="cta">${c.indicators.hosts.length ? `<button class="btn sm primary" data-block="${esc(c.id)}" data-n="${c.indicators.hosts.length}">Block ${c.indicators.hosts.length} host${c.indicators.hosts.length > 1 ? 's' : ''} on every endpoint</button>` : ''}${c.indicators.skills.length ? `<button class="btn sm primary" data-quarc="${esc(c.id)}">Quarantine skill on ${c.endpoints.length} endpoint${c.endpoints.length > 1 ? 's' : ''}</button>` : ''}<button class="btn sm" data-inv="${esc(c.id)}">Investigate</button><span class="ctamsg dim"></span></div></div>`).join('')
       : '<div class="dim" style="padding:12px">Nothing linked yet: attacks on different laptops appear here once they share a server, skill or MCP server.</div>';
     $('#campList').querySelectorAll('.camp').forEach((el) => el.onclick = async (e) => {
-      const blk = e.target.closest('[data-block]'), inv = e.target.closest('[data-inv]');
+      const blk = e.target.closest('[data-block]'), inv = e.target.closest('[data-inv]'), qc = e.target.closest('[data-quarc]');
       if (blk) return blockLinked(blk, el);
+      if (qc) return confirmThen(qc, 'Confirm: quarantine everywhere', async () => {
+        const r = await (await fetch(`/api/campaigns/${encodeURIComponent(qc.dataset.quarc)}/quarantine`, { method: 'POST' })).json();
+        if (r.error) throw new Error(r.error);
+        qc.textContent = `Quarantined on ${r.quarantined.length} endpoint${r.quarantined.length === 1 ? '' : 's'}`; qc.classList.remove('danger');
+        el.querySelector('.ctamsg').textContent = r.refused.length ? `${r.refused.length} refused` : 'the agents can no longer load it';
+      });
       if (inv) return investigateLinked(inv.dataset.inv);
       const dev = e.target.closest('[data-dev]')?.dataset.dev;
       if (dev) { setView('wall'); openDevice(dev); return; }
@@ -1619,6 +1637,17 @@
     });
     const pick = selectId || $('#campList .camp.on')?.dataset.id || campData[0]?.id;
     if (pick) showCampaign(pick);
+  }
+  // Two-click confirm for anything that changes an endpoint: the first click
+  // arms (red, says what will happen), a second within 6 s does it.
+  function confirmThen(btn, armedText, run) {
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1'; btn.dataset.label ||= btn.textContent; btn.textContent = armedText; btn.classList.add('primary', 'danger');
+      clearTimeout(btn.__t); btn.__t = setTimeout(() => { delete btn.dataset.armed; btn.classList.remove('primary', 'danger'); btn.textContent = btn.dataset.label; }, 6000);
+      return;
+    }
+    clearTimeout(btn.__t); btn.disabled = true; btn.textContent = 'Working…';
+    Promise.resolve(run()).catch((e) => { btn.disabled = false; delete btn.dataset.armed; btn.classList.remove('primary', 'danger'); btn.textContent = 'Failed, try again'; btn.title = e.message; });
   }
   // Block a linked attack's hosts everywhere: first click arms, second click
   // (within 6 s) does it. No browser dialog.

@@ -272,6 +272,36 @@ app.get('/api/fleet-summary', async (req, res, next) => { try { res.json(await f
 // Each host goes through block_host (approved, local and well-known service
 // hosts are refused) as a fleet-wide action the actuator applies on every
 // real endpoint.
+// Quarantine skills (admin; viewers are refused by the auth layer). One skill
+// on one endpoint, or every copy of a linked attack's skill across the fleet.
+async function quarantineSkills(items, reason) {
+  const server = createMcpServer({ actor: 'console (admin)' });
+  const [ct, st] = InMemoryTransport.createLinkedPair(); await server.connect(st);
+  const client = new Client({ name: 'agent-siem-console', version: '0.1.0' }); await client.connect(ct);
+  const done = [], refused = [];
+  try {
+    for (const it of items) {
+      const r = await client.callTool({ name: 'quarantine_skill', arguments: { device: it.device, path: it.path, reason } });
+      (r.isError ? refused : done).push(r.isError ? `${it.device} ${it.path}: ${r.content?.[0]?.text || 'refused'}` : `${it.device} ${it.path}`);
+    }
+  } finally { await client.close(); await server.close(); }
+  return { quarantined: done, refused };
+}
+app.post('/api/skills/quarantine', async (req, res, next) => {
+  try {
+    const { device, path: p } = req.body || {};
+    if (!device || !p) return res.status(400).json({ error: 'device and path are required' });
+    res.json(await quarantineSkills([{ device: String(device), path: String(p) }], 'Quarantined from the console'));
+  } catch (e) { next(e); }
+});
+app.post('/api/campaigns/:id/quarantine', async (req, res, next) => {
+  try {
+    const c = (await campaigns()).find((x) => x.id === req.params.id);
+    if (!c || !c.indicators.skills.length) return res.status(404).json({ error: 'no skill in this linked attack' });
+    const r = await gr().roQuery('MATCH (k:Skill)-[:SIGNATURE]->(s:SkillSig) WHERE s.sig IN $sigs AND coalesce(k.quarantined, false) = false RETURN k.device AS device, k.path AS path', { params: { sigs: c.indicators.skills } });
+    res.json(await quarantineSkills(r.data || [], `Linked attack: ${c.name}`));
+  } catch (e) { next(e); }
+});
 app.post('/api/campaigns/:id/block', async (req, res, next) => {
   try {
     const c = (await campaigns()).find((x) => x.id === req.params.id);
@@ -320,7 +350,7 @@ app.get('/api/actions', async (req, res, next) => {
   try {
     const device = String(req.query.device || '');
     const r = await gr().roQuery(
-      `MATCH (a:Action {device: $device}) WHERE a.type IN ['block_host', 'contain_session'] AND coalesce(a.status, '') <> 'withdrawn'
+      `MATCH (a:Action {device: $device}) WHERE a.type IN ['block_host', 'contain_session', 'quarantine_skill'] AND coalesce(a.status, '') <> 'withdrawn'
        RETURN a.type AS type, a.target AS target, a.status AS status, a.reason AS reason, a.result AS result, a.ts AS ts, a.applied_at AS applied_at
        ORDER BY a.ts DESC LIMIT 20`, { params: { device } });
     res.json(r.data || []);
@@ -330,7 +360,7 @@ app.get('/api/actions/pending', adminOnly, async (req, res, next) => {
   try {
     const device = String(req.query.device || '');
     const r = await gr().roQuery(
-      `MATCH (a:Action) WHERE a.type IN ['block_host', 'contain_session']
+      `MATCH (a:Action) WHERE a.type IN ['block_host', 'contain_session', 'quarantine_skill']
          AND ((a.device = $device AND a.status = 'queued')
            OR (a.device = '*' AND a.status IN ['queued', 'applied', 'failed'] AND NOT $device IN coalesce(a.applied_on, [])))
        RETURN ID(a) AS id, a.type AS type, a.target AS target, a.reason AS reason, a.alert AS alert, a.ts AS ts

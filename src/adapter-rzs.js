@@ -69,6 +69,9 @@ async function runActions(t) {
       const ips = (a.ips || []).filter((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip));
       if (!ips.length) { await post(`/api/actions/${a.id}/result`, { ok: false, device: t.device, detail: `no resolved IPs for ${a.target}; the daemon enforces on IPs` }); continue; }
       for (const ip of ips) verdicts.push({ type: 'block', target: ip, rationale: `${a.reason || 'blocked'} (${a.target})` });
+    } else if (a.type === 'quarantine_skill') {
+      // Block the agent from reading the skill (its SKILL.md): it can no longer load it.
+      verdicts.push({ type: 'block', target: a.target, rationale: a.reason || 'skill quarantined' });
     } else if (a.type === 'contain_session') {
       verdicts.push({ type: 'contain_session', session_id: a.target, rationale: a.reason || 'contained' });
     } else continue;

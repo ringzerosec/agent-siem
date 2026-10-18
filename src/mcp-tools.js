@@ -306,6 +306,27 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
     return text(await recordAction({ device, alertId: alert_id, type: 'block_host', target: host, reason, by: actor }));
   });
 
+  server.registerTool('quarantine_skill', {
+    title: 'Quarantine skill',
+    description: 'Quarantine a skill, plugin, rule or config file on one endpoint: the daemon blocks the agent from reading it (for a skill directory, its SKILL.md), so the agent can no longer load it. Reversible. Use for a skill the scanner flagged (prompt injection, credential access, exfil instructions).',
+    inputSchema: { device: z.string(), path: z.string().describe('The skill directory or file path, as listed for the endpoint'), reason: z.string(), alert_id: z.string().optional() },
+  }, async ({ device, path, reason, alert_id }) => {
+    const r = await gr().roQuery('MATCH (:Device {id: $device})-[:HAS_SKILL]->(k:Skill {path: $path}) RETURN k.kind AS kind, k.findings AS findings', { params: { device, path } });
+    if (!r.data?.length) return fail(`no skill at ${path} on ${device}`);
+    const kind = r.data[0].kind || '';
+    // Block exactly the files the scanner flagged (one entry can be a whole
+    // skills folder); without file-level findings, a skill directory is
+    // loaded through its SKILL.md and anything else is the file itself.
+    let findings = []; try { findings = JSON.parse(r.data[0].findings || '[]'); } catch {}
+    const flagged = [...new Set(findings.filter((f) => ['high', 'critical'].includes(String(f.severity).toLowerCase()) && f.file).map((f) => String(f.file)))];
+    const targets = flagged.length ? flagged : [/skills?$/i.test(kind) && !/\.[a-z0-9]+$/i.test(path) ? `${path.replace(/\/$/, '')}/SKILL.md` : path];
+    if (propose) { propose({ type: 'quarantine_skill', device, path, targets, reason, alert_id }); return text({ recommended: true, note: `Recommended quarantining ${path} (${targets.length} file${targets.length > 1 ? 's' : ''}). A person approves it; nothing was changed.` }); }
+    await g().query('MATCH (:Device {id: $device})-[:HAS_SKILL]->(k:Skill {path: $path}) SET k.quarantined = true, k.quarantined_at = $ts, k.quarantine_reason = $reason, k.quarantined_files = $files', { params: { device, path, ts: Date.now(), reason, files: JSON.stringify(targets) } });
+    const actions = [];
+    for (const target of targets) actions.push(await recordAction({ device, alertId: alert_id, type: 'quarantine_skill', target, reason, by: actor }));
+    return text({ quarantined: path, files: targets, actions });
+  });
+
   server.registerTool('contain_session', {
     title: 'Contain session',
     description: 'Contain one agent session: the daemon stops its process tree from making new network connections or reading secrets until a human releases it. Use when the session is still active and the graph shows intent to exfiltrate.',
@@ -407,5 +428,5 @@ export function createMcpServer({ actor = 'triage-agent', readOnly = false, prop
 export const TOOL_KIND = {
   fleet_summary: 'read', list_alerts: 'read', get_alert: 'read', investigate_alert: 'read', mcp_and_skills: 'read', ai_usage: 'read', list_playbooks: 'read', list_campaigns: 'algorithm', indicator_intel: 'read', process_timeline: 'read', blast_radius: 'read', host_fleet_exposure: 'read',
   secret_followups: 'read', fleet_risk_rank: 'algorithm', run_readonly_cypher: 'read',
-  block_host: 'action', contain_session: 'action', approve_decision: 'action', dismiss_decision: 'action', list_decisions: 'read', run_deep_scan: 'action', scan_status: 'read', fleet_inventory: 'read', propose_policies: 'action', iso42001_readiness: 'read', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
+  block_host: 'action', contain_session: 'action', quarantine_skill: 'action', approve_decision: 'action', dismiss_decision: 'action', list_decisions: 'read', run_deep_scan: 'action', scan_status: 'read', fleet_inventory: 'read', propose_policies: 'action', iso42001_readiness: 'read', open_ticket: 'action', mark_false_positive: 'action', submit_verdict: 'verdict',
 };
