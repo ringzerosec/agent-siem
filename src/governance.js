@@ -30,8 +30,13 @@ export async function startDeepScan(devices) {
   for (const d of targets) {
     await g().query(`CREATE (:Command {id: $id, job: $job, device: $device, type: 'deep_scan', status: 'pending', ts: $ts, simulated: $sim})`,
       { params: { id: 'C-' + randomUUID().slice(0, 8), job, device: d.id, ts: now(), sim: d.sim } });
-    if (d.sim) await scanFromGraph(d.id, job);   // no daemon behind it: posture from what we know
   }
+  // Simulated endpoints have no daemon: their posture comes from the graph,
+  // one after another in the background like real endpoints reporting in,
+  // so the console shows the scan progressing. Real endpoints report via
+  // their adapter.
+  const sims = targets.filter((d) => d.sim).map((d) => d.id).sort();   // the order the console lists them
+  (async () => { for (const id of sims) { await new Promise((ok) => setTimeout(ok, 350 + Math.random() * 450)); await scanFromGraph(id, job).catch(() => {}); } })();
   return { job, endpoints: targets.length, real: targets.filter((d) => !d.sim).map((d) => d.id), simulated: targets.filter((d) => d.sim).length };
 }
 
@@ -74,7 +79,8 @@ async function scanFromGraph(device, job) {
 export async function scanStatus(job) {
   const r = await gr().roQuery(`MATCH (c:Command {job: $job}) RETURN c.device AS device, c.status AS status, c.simulated AS simulated`, { params: { job } });
   const rows = r.data || [];
-  return { job, total: rows.length, done: rows.filter((x) => x.status === 'done').length, pending: rows.filter((x) => x.status !== 'done').map((x) => x.device) };
+  return { job, total: rows.length, done: rows.filter((x) => x.status === 'done').length, pending: rows.filter((x) => x.status !== 'done').map((x) => x.device),
+    endpoints: rows.map((x) => ({ device: x.device, done: x.status === 'done', simulated: !!x.simulated })).sort((a, b) => a.device.localeCompare(b.device)) };
 }
 
 // ---- inventory + posture per endpoint ----------------------------------------

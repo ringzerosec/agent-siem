@@ -161,6 +161,15 @@
   /* Governance */
   #gov { padding: 16px 20px; overflow: auto; }
   .gov-actions { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  #scanProg { margin: -2px 0 14px; padding: 12px 14px; }
+  #scanProg .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; margin-bottom: 8px; }
+  #scanProg .pct { font: 600 15px var(--mono); color: var(--primary); }
+  #scanProg .bar { height: 6px; border-radius: 4px; background: var(--accent); overflow: hidden; }
+  #scanProg .bar i { display: block; height: 100%; width: 0; background: var(--primary); border-radius: 4px; transition: width .4s ease; }
+  #scanProg .what { color: var(--muted-foreground); font-size: 12px; margin-top: 8px; }
+  #scanProg .eps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  #scanProg .eps span { font: 11px var(--mono); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border); color: var(--muted-foreground); }
+  #scanProg .eps span.done { border-color: transparent; background: var(--event-allow-bg); color: var(--event-allow-text); }
   .gov-grid { display: grid; grid-template-columns: minmax(360px, 520px) 1fr; gap: 14px; align-items: start; }
   @media (max-width: 1000px) { .gov-grid { grid-template-columns: 1fr; } }
   .iso { padding: 10px 14px; border-top: 1px solid var(--border); }
@@ -199,7 +208,7 @@
   #triage .step { display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12.5px; }
   #triage .step:first-child { border-top: 0; }
   #triage .k { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font: 600 10px var(--mono); color: #fff; background: var(--muted-foreground); }
-  #triage .k.read { background: #2b8a92; } #triage .k.algorithm { background: #7c3aed; } #triage .k.action { background: #dc2626; } #triage .k.verdict { background: var(--primary); } #triage .k.thought { background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); }
+  #triage .k.read { background: #2b8a92; } #triage .k.algorithm { background: #7c3aed; } #triage .k.action { background: #dc2626; } #triage .k.vk { background: var(--primary); } #triage .k.rec { background: #d97706; } #triage .k.thought { background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); }
   #triage .tool { font: 600 12px var(--mono); }
   #triage .why { color: var(--muted-foreground); }
   #triage .res { grid-column: 2; font: 11px var(--mono); color: var(--muted-foreground); white-space: pre-wrap; word-break: break-word; }
@@ -459,6 +468,7 @@
 <div id="gov" hidden>
   <div class="camp-top"><div><h2>Governance</h2><p>Discover what every endpoint runs (agents, AI services, MCP servers, skills, identities, posture), turn it into policy proposals that wait for a yes, and map the evidence to ISO/IEC 42001. Evidence for an audit, not a certification.</p></div></div>
   <div class="gov-actions"><button class="btn primary" id="govScan">Deep scan fleet</button><button class="btn" id="govPropose">Propose policies</button><span class="dim" id="govStatus"></span></div>
+  <div class="card" id="scanProg" hidden><div class="top"><b id="scanHead">Deep scan</b><span class="pct" id="scanPct">0%</span></div><div class="bar"><i id="scanBar"></i></div><div class="what" id="scanWhat"></div><div class="eps" id="scanEps"></div></div>
   <div class="gov-grid">
     <div class="card"><div class="card-header"><h2 class="sec">ISO/IEC 42001 readiness</h2><span class="badge outline" id="isoScore">–</span></div><div id="isoAreas"></div></div>
     <div class="card"><div class="card-header"><h2 class="sec">Fleet inventory and posture</h2></div><table class="tbl" id="invTable"><thead><tr><th>Endpoint</th><th>Owner</th><th>Agents</th><th>AI</th><th>MCP</th><th>Skills</th><th>Posture</th><th>Scanned</th></tr></thead><tbody></tbody></table></div>
@@ -1141,11 +1151,12 @@
   // ---- triage agent -------------------------------------------------------
   const VERDICT = { true_positive_contained: ['contained', 'contained'], true_positive_active: ['active threat', 'solid'], false_positive: ['false positive', 'outline'], needs_human: ['needs a human', 'warning'] };
   const verdictBadge = (v) => `<span class="badge ${VERDICT[v]?.[1] || 'outline'}" title="Triage agent verdict">agent: ${esc(VERDICT[v]?.[0] || v)}</span>`;
-  const KIND_MARK = { read: 'Q', algorithm: 'Σ', action: '!', verdict: '✓', thought: '·' };
+  const KIND_MARK = { read: 'Q', algorithm: 'Σ', action: '!', rec: '→', vk: '✓', thought: '·' };
   // One line a person can read for each tool result.
   function resultLine(tool, r) {
     if (!r) return '';
     if (r.error) return r.error;
+    if (r.recommended) return r.note;
     switch (tool) {
       case 'get_alert': return `${r.nodes?.length} nodes, ${r.edges?.length} edges · ${r.edges?.filter((e) => !e.allowed).length} refused · ${r.mitre || ''}`;
       case 'process_timeline': return `${r.steps?.length} steps: ` + (r.steps || []).slice(0, 4).map((x) => `${x.type.toLowerCase()} ${x.target?.name || ''}`).join(', ');
@@ -1160,13 +1171,16 @@
       default: return JSON.stringify(r).slice(0, 160);
     }
   }
+  // 'verdict' as a class collides with the verdict box style; recommendations
+  // (block/contain in an investigation) are not actions.
+  const stepKind = (st) => st.result?.recommended ? 'rec' : st.kind === 'verdict' ? 'vk' : st.kind;
   function renderTriage(job) {
     $('#triageCard').hidden = false;
-    $('#triageMode').textContent = job.mode === 'agent' ? `· Claude (${job.model}) over MCP` : '· playbook over MCP (set ANTHROPIC_API_KEY for the Claude agent)';
+    $('#triageMode').textContent = job.mode === 'agent' ? `· Claude (${job.model}) over MCP` : '· playbook over MCP';
     $('#triageStatus').textContent = job.status === 'running' ? 'investigating…' : job.status;
     const steps = job.steps.map((st) => st.kind === 'thought'
       ? (st.text ? `<div class="step"><span class="k thought">${KIND_MARK.thought}</span><span class="why">${esc(st.text)}</span></div>` : '')
-      : `<div class="step"><span class="k ${st.kind}" title="${st.kind}">${KIND_MARK[st.kind] || '?'}</span><span><span class="tool">${esc(st.tool)}</span>${st.why ? ` <span class="why">· ${esc(st.why)}</span>` : ''}</span><div class="res ${st.error ? 'err' : ''}">${esc(resultLine(st.tool, st.result))}</div></div>`).join('');
+      : `<div class="step"><span class="k ${stepKind(st)}" title="${stepKind(st) === 'rec' ? 'recommendation, waits for a person' : st.kind}">${KIND_MARK[stepKind(st)] || '?'}</span><span><span class="tool">${esc(st.tool)}</span>${st.why ? ` <span class="why">· ${esc(st.why)}</span>` : ''}</span><div class="res ${st.error ? 'err' : ''}">${esc(resultLine(st.tool, st.result))}</div></div>`).join('');
     const v = job.verdict;
     const verdictHtml = v ? `<div class="verdict"><div class="vh">${verdictBadge(v.verdict)}<span class="dim" style="font-weight:400">confidence ${Math.round(v.confidence * 100)}%</span></div>${esc(v.summary)}${v.evidence?.length ? `<ul>${v.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}</div>` : '';
     $('#triage').innerHTML = verdictHtml + steps + (job.status === 'running' ? '<div class="running">Agent is investigating…</div>' : '');
@@ -1517,9 +1531,25 @@
     $('#invTable').querySelectorAll('[data-dev]').forEach((a) => a.onclick = (e) => { e.preventDefault(); setView('wall'); openDevice(a.dataset.dev); });
   }
   $('#govScan').onclick = async () => {
+    const btn = $('#govScan'); btn.disabled = true; btn.textContent = 'Scanning…'; $('#govStatus').textContent = '';
     const r = await (await fetch('/api/scan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
-    $('#govStatus').textContent = `scan ${r.job}: ${r.endpoints} endpoints${r.real.length ? `, waiting for ${r.real.join(', ')}` : ''}…`;
-    for (let i = 0; i < 40; i++) { const st2 = await (await fetch(`/api/scan/${r.job}`)).json(); $('#govStatus').textContent = `scan ${r.job}: ${st2.done}/${st2.total} reported${st2.pending.length ? ` (waiting: ${st2.pending.join(', ')})` : ''}`; if (!st2.pending.length) break; await new Promise((ok) => setTimeout(ok, 2000)); }
+    const box = $('#scanProg'); box.hidden = false;
+    $('#scanHead').textContent = `Deep scan of ${r.endpoints} endpoint${r.endpoints === 1 ? '' : 's'}`;
+    const ASPECTS = ['agents and sessions', 'AI services', 'MCP servers', 'skills, plugins and rules', 'identities', 'enforcement posture'];
+    let st2 = null;
+    for (let i = 0; i < 150; i++) {   // up to ~2 minutes for real endpoints
+      st2 = await (await fetch(`/api/scan/${r.job}`)).json();
+      const pct = st2.total ? Math.round((100 * st2.done) / st2.total) : 100;
+      $('#scanPct').textContent = `${pct}%`; $('#scanBar').style.width = `${pct}%`;
+      const next = st2.endpoints.find((e) => !e.done);
+      $('#scanWhat').textContent = next ? `${st2.done} of ${st2.total} reported · scanning ${next.device}: ${ASPECTS[i % ASPECTS.length]}…${next.simulated ? '' : ' (waiting for its daemon)'}` : `${st2.total} of ${st2.total} reported`;
+      $('#scanEps').innerHTML = st2.endpoints.map((e) => `<span class="${e.done ? 'done' : ''}">${e.done ? '✓ ' : ''}${esc(e.device)}</span>`).join('');
+      if (!st2.pending.length) break;
+      await new Promise((ok) => setTimeout(ok, 700));
+    }
+    btn.disabled = false; btn.textContent = 'Deep scan fleet';
+    $('#govStatus').textContent = st2?.pending.length ? `${st2.pending.length} endpoint(s) did not report: ${st2.pending.join(', ')}` : 'Scan complete.';
+    setTimeout(() => { box.hidden = true; }, 2500);
     loadGov();
   };
   $('#govPropose').onclick = async () => { const r = await (await fetch('/api/policies/propose', { method: 'POST' })).json(); const waiting = r.proposals - r.created, pl = (n) => `${n} polic${n === 1 ? 'y' : 'ies'}`;
