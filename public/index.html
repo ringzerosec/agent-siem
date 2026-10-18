@@ -652,7 +652,9 @@
       // Edge labels only where they tell the story (the attack path); the rest
       // show on hover or when a node is selected, so labels do not pile up.
       arrows: mini ? undefined : 'to', font: { color: css('--muted-foreground'), size: onEdge.has(e.id) ? 10 : 0, align: 'middle', strokeWidth: 3, strokeColor: css('--canvas') },
-      chosen: mini ? false : { edge: true, label: (v) => { v.size = 10; } },
+      // Label on hover of the edge itself only: selecting a hub would otherwise
+      // light up dozens of identical labels ("called_ai" x 40).
+      chosen: mini ? false : { edge: true, label: (v, id, selected, hovering) => { if (hovering) v.size = 10; } },
       color: onEdge.has(e.id) ? { color: '#dc2626', highlight: '#dc2626' } : { color: e.properties?.allowed === false ? '#d97706' : edge, highlight: '#01696f' },
       width: onEdge.has(e.id) ? (mini ? 2 : 3) : 1, dashes: e.properties?.allowed === false,
     }));
@@ -703,8 +705,21 @@
   function highlightNode(id) { FLOW.sel = id; flowTargets(); }
   function drawFlow(ctx) {
     const n = FLOW.halo != null && state.net?.body?.nodes[FLOW.halo]; if (!n) return;
+    const r = (n.options.size || 15) + 8;
     ctx.save(); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(1,105,111,.6)';
-    ctx.beginPath(); ctx.arc(n.x, n.y, (n.options.size || 15) + 8, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.stroke();
+    // The selected node's name on top of everything, above the node: on a hub
+    // its own label is buried under the arrowheads of every edge into it.
+    const text = String(state.nodes.get(FLOW.halo)?.label || '').replace('\n', ' · ');
+    if (text) {
+      const scale = state.net.getScale(), fs = 13 / Math.max(scale, 0.4);
+      ctx.font = `600 ${fs}px Geist Mono, ui-monospace, monospace`;
+      const w = ctx.measureText(text).width, pad = 6 / Math.max(scale, 0.4), h = fs + pad * 1.4, y = n.y - r - h - 4 / scale;
+      ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#01696f'; ctx.lineWidth = 1.5 / Math.max(scale, 0.4);
+      ctx.beginPath(); ctx.roundRect(n.x - w / 2 - pad, y, w + pad * 2, h, 5 / Math.max(scale, 0.4)); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#0a0a0a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, n.x, y + h / 2);
+    }
+    ctx.restore();
   }
 
   // ---- the wall ---------------------------------------------------------
