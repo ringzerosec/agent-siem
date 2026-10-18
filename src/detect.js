@@ -438,16 +438,30 @@ async function detectUncached(session) {
 // Blast radius: everything reachable from a node within N hops, in any
 // direction, inside one session. Answers "if this file leaked, what else did
 // that tree touch?"
+// Neighbours within 1 or 2 hops, as node and edge sets. Expanding every path
+// (the old [*1..2] form) explodes on busy nodes, an agent process with
+// hundreds of actions or a host the whole fleet talks to, and hit the
+// database's 1 s query timeout, so a click on such a node showed nothing.
+// Sets grow linearly and are capped.
 export async function blastRadius(nodeId, hops = 2) {
   const graph = gr();
   const res = await graph.roQuery(
     `MATCH (n) WHERE ID(n) = $id
-     MATCH path = (n)-[*1..${Math.min(Math.max(hops, 1), 4)}]-(m)
-     WHERE NOT m:Session AND NOT m:Agent
-     RETURN nodes(path) AS pn, relationships(path) AS pr LIMIT 500`,
+     OPTIONAL MATCH (n)-[r1]-(m) WHERE NOT m:Session AND NOT m:Agent
+     WITH n, collect(DISTINCT m)[..80] AS ms, collect(DISTINCT r1)[..160] AS r1s
+     RETURN ms AS pn, r1s AS pr`,
     { params: { id: Number(nodeId) } },
   );
-  return collect(res.data || []);
+  const first = collect(res.data || []);
+  if (hops < 2 || !first.nodes.length) return first;
+  const res2 = await graph.roQuery(
+    `MATCH (m) WHERE ID(m) IN $ms
+     MATCH (m)-[r2]-(k) WHERE ID(k) <> $id AND NOT k:Session AND NOT k:Agent
+     WITH collect(DISTINCT k)[..220] AS ks, collect(DISTINCT r2)[..340] AS r2s
+     RETURN ks AS pn, r2s AS pr`,
+    { params: { id: Number(nodeId), ms: first.nodes.map((x) => x.id) } },
+  );
+  return collect([...(res.data || []), ...(res2.data || [])]);
 }
 
 // All alerts on one device = union over its sessions.

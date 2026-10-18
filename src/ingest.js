@@ -24,7 +24,7 @@
 import { g } from './db.js';
 import { parseInstall, lookup } from './osv.js';
 import { linkIp, enrichHost, skillSignature } from './intel.js';
-import { fingerprint, aiApproved, isKnownAgent } from './shadowai.js';
+import { fingerprint, aiApproved, isKnownAgent, knownAiProvider } from './shadowai.js';
 import { isLlmCall } from './brain.js';
 
 const SENSITIVE = [
@@ -77,7 +77,11 @@ const APPROVED_HOSTS = new Set(
 const APPROVED_IPS = new Map(  // ip -> approved hostname it belongs to
   (process.env.APPROVED_IPS || '').split(',').map((s) => s.trim()).filter(Boolean).map((ip) => [ip, 'APPROVED_IPS']),
 );
-export function approvedAs(name) { return APPROVED_HOSTS.has(name) ? name : APPROVED_IPS.get(name) || null; }
+// An approved AI provider's API host is an approved host too: an agent talking
+// to its own approved model is not exfiltration. (Unapproved AI services are
+// caught by the shadow-AI rules, not the exfil ones.)
+const approvedAiHost = (name) => { const p = knownAiProvider(name); return !!p && aiApproved(name, p); };
+export function approvedAs(name) { return APPROVED_HOSTS.has(name) ? name : APPROVED_IPS.get(name) || (approvedAiHost(name) ? name : null); }
 export function isApprovedHost(name) { return approvedAs(name) !== null; }
 export async function refreshApprovedIps() {
   const { promises: dns } = await import('node:dns');
@@ -87,6 +91,14 @@ export async function refreshApprovedIps() {
       try { for (const ip of await dns[fam](h)) if (!APPROVED_IPS.has(ip)) { APPROVED_IPS.set(ip, h); fresh.push({ ip, host: h }); } } catch { /* no records of this family */ }
     }
   }));
+  // Hosts stored before their AI provider counted as approved.
+  const ai = ((await g().query('MATCH (h:Host) WHERE coalesce(h.approved, false) = false RETURN h.name AS n')).data || []).map((x) => x.n).filter(approvedAiHost);
+  let aiSessions = [];
+  if (ai.length) {
+    const ar = await g().query(`MATCH (h:Host) WHERE h.name IN $ai SET h.approved = true, h.resolved_as = h.name
+      WITH h MATCH (s:Session)-[:HAS]->(:Process)-[:CONNECTED|SENT]->(h) RETURN DISTINCT s.id AS id`, { params: { ai } });
+    aiSessions = (ar.data || []).map((x) => x.id);
+  }
   // Mark every stored Host that is one of these addresses as approved.
   const rows = [...APPROVED_IPS].map(([ip, host]) => ({ ip, host }));
   const r = await g().query(
@@ -97,7 +109,7 @@ export async function refreshApprovedIps() {
      RETURN DISTINCT s.id AS id`,
     { params: { rows } },
   );
-  return { learned: fresh.length, total: APPROVED_IPS.size, sessions: (r.data || []).map((x) => x.id) };
+  return { learned: fresh.length, total: APPROVED_IPS.size, sessions: [...new Set([...(r.data || []).map((x) => x.id), ...aiSessions])] };
 }
 // A real network destination, not a parse fragment ("0.0.0.0", ".so.1", "Root_CA.crt").
 export function isRoutable(name) {

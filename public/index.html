@@ -369,6 +369,14 @@
   .tl li.refused { color: var(--event-block-text); }
   .tl .ts { color: var(--muted-foreground); }
   .node .actions { display: flex; gap: 8px; margin: 8px 0 12px; flex-wrap: wrap; }
+  .node .rel { margin: 4px 0 10px; }
+  .node .rel .sec { margin: 0 0 6px; }
+  .node .ra { border: 1px solid var(--border); border-left: 3px solid var(--event-pii); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 12.5px; }
+  .node .ra.critical { border-left-color: var(--destructive); }
+  .node .ra .rt { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .node .ra .rs { color: var(--muted-foreground); margin-top: 4px; }
+  .node .ra .rr { margin-top: 4px; }
+  .node .ra .actions { margin: 8px 0 0; }
   @media (max-width: 1000px) { #detail { grid-template-columns: 1fr; grid-template-rows: 52vh 1fr; } #canvas { border-right: 0; border-bottom: 1px solid var(--border); } }
   /* App shell (21st "App Dashboard Layout" / shadcn sidebar pattern): a quiet
      left sidebar for navigation and account, a slim top bar for the page
@@ -501,6 +509,13 @@
     <div class="card">
       <div class="endpoint" id="endpoint"></div>
     </div>
+    <div class="card" id="nodeCard" hidden>
+      <div class="card-header"><h2 class="sec">Selected node</h2><button class="btn sm" id="nodeClose" aria-label="Close">×</button></div>
+      <div class="card-content">
+        <div class="dim" id="nodehint" style="font-size:12px">Click a node for its timeline and blast radius. Double-click to focus.</div>
+        <div class="node" id="nodeDetail" hidden></div>
+      </div>
+    </div>
     <div class="card" id="surfaceCard">
       <div class="card-header"><h2 class="sec">AI, MCP &amp; skills <span class="dim">· what the agents use and load</span></h2><span class="badge outline" id="surfaceCount">0</span></div>
       <div id="surface"></div>
@@ -516,13 +531,6 @@
     <div class="card">
       <div class="card-header"><h2 class="sec">Session feed <span class="dim">· prompts and narrative</span></h2></div>
       <ul class="feed" id="feed"></ul>
-    </div>
-    <div class="card">
-      <div class="card-header"><h2 class="sec">Selected node</h2></div>
-      <div class="card-content">
-        <div class="dim" id="nodehint" style="font-size:12px">Click a node for its timeline and blast radius. Double-click to focus.</div>
-        <div class="node" id="nodeDetail" hidden></div>
-      </div>
     </div>
   </section>
 </div>
@@ -1187,7 +1195,7 @@
     state.device = null; state.focus = null; state.graph = null;
     $('#detail').hidden = true; $('#back').hidden = true; $('#pageTitle').textContent = TITLES[view] || ''; pushRoute();
     if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); state.net = null; }
-    $('#nodeDetail').hidden = true; $('#nodehint').hidden = false;
+    $('#nodeDetail').hidden = true; $('#nodehint').hidden = false; $('#nodeCard').hidden = true;
     if (view === 'wall') refitTiles();
   }
 
@@ -1244,9 +1252,19 @@
   // ---- node detail --------------------------------------------------------
   async function selectNode(id) {
     state.selectedNode = id;
-    const d = await (await fetch(`/api/node/${id}`)).json();
-    const n = d.node; const p = n.properties;
-    $('#nodehint').hidden = true; const el = $('#nodeDetail'); el.hidden = false;
+    // The node's attacks come from the graph already on screen, so the card
+    // shows even if the details request is slow or fails.
+    let d = null; try { const r = await fetch(`/api/node/${id}`); if (r.ok) d = await r.json(); } catch {}
+    if (state.selectedNode !== id) return;
+    const local = state.graph?.nodes.find((x) => x.id === id);
+    d = d?.node ? d : { node: local, timeline: [], radius: null };
+    if (!d.node) return;
+    const n = d.node; const p = n.properties || {};
+    $('#nodehint').hidden = true; const el = $('#nodeDetail'); el.hidden = false; $('#nodeCard').hidden = false;
+    // Lead with the attacks this node is part of: that is what a click on a
+    // red node is asking.
+    const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+    const rel = (state.graph?.alerts || []).filter((a) => a.severity !== 'info' && a.nodes.includes(id)).sort((x, y) => (rank[x.severity] ?? 4) - (rank[y.severity] ?? 4));
     let extra = '';
     if (n.labels.includes('Vulnerability')) {
       extra = `<div class="adv"><div class="row"><span class="id">${esc(p.id)}</span>${sevBadge(p.severity || 'unknown')}${(p.aliases || '').split(',').filter(Boolean).map((c) => `<span class="badge outline">${esc(c)}</span>`).join('')}<a href="${esc(p.url || '')}" target="_blank" rel="noopener">osv.dev ↗</a></div>${p.summary ? `<div class="sum">${esc(p.summary)}</div>` : ''}${p.fixed ? `<div class="fix">Fixed in <b>${esc(String(p.fixed).split(',')[0])}</b></div>` : ''}${p.details ? `<div class="sum dim" style="margin-top:6px;white-space:pre-wrap">${esc(p.details)}</div>` : ''}${p.cvss ? `<div class="fix dim">${esc(p.cvss)}</div>` : ''}</div>`;
@@ -1254,12 +1272,22 @@
     const skip = new Set(['key', 'session', 'details', 'summary', 'aliases', 'url', 'fixed', 'introduced', 'cvss']);
     const props = Object.entries(p).filter(([k]) => !skip.has(k)).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
     const tl = d.timeline.filter((t) => t.ts).map((t) => `<li class="${t.allowed === false ? 'refused' : ''}"><span class="ts">${fmt(t.ts)}</span><span>${t.outgoing ? '' : '← '}${esc(t.action.toLowerCase())}${t.allowed === false ? ' ✗' : ''}</span><span>${esc(label(t.m).replace('\n', ' '))}${t.argv ? ' · ' + esc(t.argv) : ''}${t.port ? ':' + t.port : ''}</span></li>`).join('');
-    el.innerHTML = `<div class="kind">${esc(n.labels.join(', '))}</div><div class="name">${esc(label(n).replace('\n', ' · '))}</div>${extra}
+    const relHtml = rel.length
+      ? `<div class="rel"><h2 class="sec">Part of ${rel.length} attack${rel.length > 1 ? 's' : ''}</h2>${rel.slice(0, 5).map((a, i) => `<div class="ra ${esc(a.severity)}">
+          <div class="rt">${sevBadge(a.severity)}${a.blocked === true ? '<span class="badge contained">blocked</span>' : a.blocked === false ? '<span class="badge outline">not blocked</span>' : ''}<b>${esc(a.title)}</b></div>
+          <div class="rs">${esc(a.summary)}</div>${a.response ? `<div class="rr"><b>${a.blocked === true ? 'Follow-up' : 'Recommended'}:</b> ${esc(a.response)}</div>` : ''}
+          <div class="actions"><button class="btn sm" data-spot="${i}">Show this attack</button><button class="btn sm primary" data-inv="${esc(a.id)}">Investigate</button></div></div>`).join('')}</div>`
+      : '<div class="dim" style="font-size:12px;margin-bottom:8px">Not part of any attack.</div>';
+    el.innerHTML = `<div class="kind">${esc(n.labels.join(', '))}</div><div class="name">${esc(label(n).replace('\n', ' · '))}</div>${relHtml}${extra}
       <dl>${props}</dl>
       <div class="actions"><button class="btn sm" id="focusBtn">This node's graph</button><button class="btn sm" id="radiusBtn">Blast radius (2 hops)</button></div>
       <h2 class="sec" style="margin:6px 0">Timeline</h2><ul class="tl">${tl || '<li>no timed actions</li>'}</ul>`;
+    el.querySelectorAll('[data-spot]').forEach((b) => b.onclick = () => spotlight(rel[Number(b.dataset.spot)]));
+    el.querySelectorAll('.rel [data-inv]').forEach((b) => b.onclick = () => investigate(b.dataset.inv));
+    $('.side').scrollTop = 0;
     $('#focusBtn').onclick = () => focusNode(id);
-    $('#radiusBtn').onclick = () => { state.focus = id; $('#whole').hidden = false; render(d.radius.nodes.concat([n]), d.radius.edges, state.graph?.alerts || [], `blast radius of <b>${esc(label(n).replace('\n', ' '))}</b> · ${d.radius.nodes.length} reachable`); };
+    if (!d.radius) $('#radiusBtn').disabled = true;
+    $('#radiusBtn').onclick = () => { if (!d.radius) return; state.focus = id; $('#whole').hidden = false; render(d.radius.nodes.concat([n]), d.radius.edges, state.graph?.alerts || [], `blast radius of <b>${esc(label(n).replace('\n', ' '))}</b> · ${d.radius.nodes.length} reachable`); };
   }
   async function focusNode(id) {
     const d = await (await fetch(`/api/node/${id}?hops=1`)).json();
@@ -1535,6 +1563,7 @@
   loadFacets(); setInterval(() => { if (view === 'events') loadEvents(); loadFacets(); }, 10000);
 
   $('#back').onclick = closeDevice;
+  $('#nodeClose').onclick = () => { $('#nodeCard').hidden = true; state.selectedNode = null; state.net?.unselectAll(); };
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && fitReadable(state.net);
   $('#spotClear').onclick = () => { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); };
