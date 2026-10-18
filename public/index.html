@@ -666,7 +666,7 @@
       id: e.id, from: e.sourceId, to: e.destinationId, label: mini ? undefined : e.relationshipType.toLowerCase(),
       // Edge labels only where they tell the story (the attack path); the rest
       // show on hover or when a node is selected, so labels do not pile up.
-      arrows: mini ? undefined : 'to', font: { color: css('--muted-foreground'), size: onEdge.has(e.id) ? 10 : 0, align: 'middle', strokeWidth: 3, strokeColor: css('--canvas') },
+      arrows: { to: { enabled: false } }, font: { color: css('--muted-foreground'), size: onEdge.has(e.id) ? 10 : 0, align: 'middle', strokeWidth: 3, strokeColor: css('--canvas') },
       // Label on hover of the edge itself only: selecting a hub would otherwise
       // light up dozens of identical labels ("called_ai" x 40).
       chosen: mini ? false : { edge: true, label: (v, id, selected, hovering) => { if (hovering) v.size = 10; } },
@@ -697,12 +697,15 @@
   // Lay the graph out without showing it move: vis computes the physics with
   // redraws blocked (stabilize), then physics is switched off and the graph
   // is drawn once in its final place. ms is kept as the effort budget.
-  function settle(net, ms, fit = true) {
+  function settle(net, ms, fit = true, hide = false) {
     clearTimeout(net.__settle);
+    // First layout of a graph: keep it invisible until it has settled, so the
+    // browser never shows the nodes flying into place.
+    const el = net.body?.container; if (hide && el) el.style.opacity = '0';
     net.setOptions({ physics: { enabled: true } });
     // A hidden network (wall behind another tab) measures 0x0, and fitting it
     // then leaves a wrong zoom; remember the fit and do it when it is shown.
-    const done = () => { clearTimeout(net.__settle); net.setOptions({ physics: { enabled: false } }); if (fit) { if (net.body.container.clientWidth) fitReadable(net); else net.__needsFit = true; } };
+    const done = () => { clearTimeout(net.__settle); net.setOptions({ physics: { enabled: false } }); if (fit) { if (net.body.container.clientWidth) fitReadable(net); else net.__needsFit = true; } if (el) el.style.opacity = ''; };
     net.once('stabilized', done);
     net.__settle = setTimeout(done, 3000);   // never leave physics running (empty graphs never report stabilized)
     net.stabilize(Math.max(100, Math.round(ms / 4)));
@@ -828,7 +831,7 @@
     const have = new Set(t.nodes.getIds());
     t.nodes.update(vnodes); t.edges.update(vedges);
     for (const nid of have) if (!vnodes.find((n) => n.id === nid)) t.nodes.remove(nid);
-    if (vnodes.length !== t.had) { t.had = vnodes.length; settle(t.net, 700); }
+    if (vnodes.length !== t.had) { const first = !t.had; t.had = vnodes.length; settle(t.net, 700, true, first); }
   }
 
   // ---- device detail ----------------------------------------------------
@@ -893,12 +896,22 @@
     if (!state.net) {
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
-      settle(state.net, 2500);
+      settle(state.net, 2500, true, true);
       FLOW.sel = null; FLOW.spot = null; setTimeout(flowTargets, 0);
       // Dragging a node turns the springs on, so its neighbours follow it;
       // on release the graph settles briefly and freezes again (no refit).
-      state.net.on('dragStart', (p) => { if (p.nodes.length) { clearTimeout(state.net.__settle); state.net.setOptions({ physics: { enabled: true } }); } });
-      state.net.on('dragEnd', (p) => { if (p.nodes.length) settle(state.net, 1200, false); });
+      // Only a real drag (> 6 px) wakes the physics: a click nearly always
+      // moves the mouse a pixel or two, and that used to reshuffle the graph.
+      // On release, neighbours get half a second to come to rest, then freeze.
+      state.net.on('dragStart', (p) => { state.drag = p.nodes.length ? { x: p.pointer.DOM.x, y: p.pointer.DOM.y, on: false } : null; });
+      state.net.on('dragging', (p) => {
+        const d = state.drag; if (!d || d.on || Math.hypot(p.pointer.DOM.x - d.x, p.pointer.DOM.y - d.y) < 6) return;
+        d.on = true; clearTimeout(state.net.__settle); state.net.setOptions({ physics: { enabled: true } });
+      });
+      state.net.on('dragEnd', () => {
+        const d = state.drag; state.drag = null; if (!d?.on) return;
+        clearTimeout(state.net.__settle); state.net.__settle = setTimeout(() => state.net?.setOptions({ physics: { enabled: false } }), 500);
+      });
       state.net.on('click', (p) => {
         if (p.nodes.length) { highlightNode(p.nodes[0]); selectNode(p.nodes[0]); return; }
         FLOW.sel = null; flowTargets();
@@ -1663,7 +1676,7 @@
     const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges.filter((e) => !e.hidden)) };
     if (campNet) campNet.destroy();
     campNet = new vis.Network($('#campNet'), data, { ...FORCE(false), interaction: { hover: true } });
-    settle(campNet, 1200);
+    settle(campNet, 1200, true, true);
   }
 
   async function loadFacets() {
