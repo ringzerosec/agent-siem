@@ -672,7 +672,8 @@
       // Label on hover of the edge itself only: selecting a hub would otherwise
       // light up dozens of identical labels ("called_ai" x 40).
       chosen: mini ? false : { edge: true, label: (v, id, selected, hovering) => { if (hovering) v.size = 10; } },
-      color: onEdge.has(e.id) ? { color: '#dc2626', highlight: '#dc2626' } : { color: e.properties?.allowed === false ? '#d97706' : edge, highlight: '#01696f' },
+      // hover keeps the edge's own colour (vis's default hover grey hid red paths)
+      color: onEdge.has(e.id) ? { color: '#dc2626', highlight: '#dc2626', hover: '#dc2626' } : { color: e.properties?.allowed === false ? '#d97706' : edge, highlight: '#01696f', hover: e.properties?.allowed === false ? '#d97706' : '#94a3b8' },
       width: (onEdge.has(e.id) ? (mini ? 2 : 3) : 1) + (e.properties?.count > 1 ? Math.min(3, Math.log2(e.properties.count)) : 0), dashes: e.properties?.allowed === false,
     }));
     return { vnodes, vedges };
@@ -901,7 +902,7 @@
       state.nodes = new vis.DataSet(vnodes); state.edges = new vis.DataSet(vedges);
       state.net = new vis.Network($('#graph'), { nodes: state.nodes, edges: state.edges }, { ...FORCE(false), interaction: { hover: true } });
       settle(state.net, 2500, true, true);
-      FLOW.sel = null; FLOW.spot = null; setTimeout(flowTargets, 0);
+      FLOW.sel = null; FLOW.spot = null; state.spotA = null; state.base = null; setTimeout(flowTargets, 0);
       // Dragging a node turns the springs on, so its neighbours follow it;
       // on release the graph settles briefly and freezes again (no refit).
       // Only a real drag (> 6 px) wakes the physics: a click nearly always
@@ -934,6 +935,7 @@
       for (const id of have) if (!vnodes.find((n) => n.id === id)) state.nodes.remove(id);
       for (const id of state.edges.getIds()) if (!vedges.find((e) => e.id === id)) state.edges.remove(id);
       if (grew) settle(state.net, 600);
+      if (state.spotA) { state.base = null; spotlight(state.spotA, { fit: false }); }
       flowTargets();
     }
   }
@@ -1236,18 +1238,38 @@
 
   // Spotlight one alert: its path stays vivid, everything else fades, and the
   // view zooms to the chain. Passing null restores the whole graph.
-  function spotlight(a) {
+  function spotlight(a, { fit = true } = {}) {
     if (!state.net) return;
-    a = drawnIds(a);
-    state.spot = a?.id || null;
-    const keepN = new Set(a ? a.nodes : []), keepE = new Set(a ? a.edges : []);
-    state.nodes.update(state.nodes.get().map((n) => ({ id: n.id, opacity: !a || keepN.has(n.id) ? 1 : 0.3, font: { ...(n.font || {}), color: !a || keepN.has(n.id) ? css('--label') : 'rgba(0,0,0,0.3)' } })));
-    state.edges.update(state.edges.get().map((e) => ({ id: e.id, hidden: false, color: !a || keepE.has(e.id) ? e.__color || e.color : { color: 'rgba(148,163,184,.25)', highlight: 'rgba(148,163,184,.25)' }, __color: e.__color || e.color })));
-    FLOW.spot = a ? new Set(a.edges) : null; flowTargets();
+    // Restore everyone's own styling first (from before the last spotlight).
+    if (state.base) {
+      state.nodes.update([...state.base.nodes].filter(([id]) => state.nodes.get(id)).map(([id, v]) => ({ id, ...v })));
+      state.edges.update([...state.base.edges].filter(([id]) => state.edges.get(id)).map(([id, v]) => ({ id, ...v })));
+      state.base = null;
+    }
+    state.spotA = a || null;
+    const d = drawnIds(a);
+    state.spot = d?.id || null;
+    if (d) {
+      // Only this attack is red; everything else is drawn as normal, neutral
+      // and slightly faded, so the chosen path is the only red on screen.
+      const keepN = new Set(d.nodes), keepE = new Set(d.edges), nb = css('--node-border'), edge = css('--edge');
+      state.base = {
+        nodes: new Map(state.nodes.get().map((n) => [n.id, { color: n.color, borderWidth: n.borderWidth, shadow: n.shadow, opacity: 1, font: n.font }])),
+        edges: new Map(state.edges.get().map((e) => [e.id, { color: e.color, width: e.width }])),
+      };
+      state.nodes.update(state.nodes.get().map((n) => keepN.has(n.id)
+        ? { id: n.id, opacity: 1, borderWidth: 4, color: { border: '#dc2626', background: '#dc2626', highlight: { border: '#0a0a0a', background: '#dc2626' } }, shadow: { enabled: true, color: 'rgba(220,38,38,.45)', size: 18, x: 0, y: 0 } }
+        : { id: n.id, opacity: 0.55, borderWidth: 1, color: { border: nb, background: nb, highlight: { border: '#01696f', background: '#01696f' } }, shadow: false }));
+      state.edges.update(state.edges.get().map((e) => keepE.has(e.id)
+        ? { id: e.id, color: { color: '#dc2626', highlight: '#dc2626', hover: '#dc2626' }, width: 3 }
+        : { id: e.id, color: { color: edge, highlight: '#01696f', hover: '#94a3b8' }, width: 1 }));
+    }
+    FLOW.spot = d ? new Set(d.edges) : null; flowTargets();
+    if (!fit) return;
     state.net.unselectAll();
-    if (a) state.net.fit({ nodes: a.nodes, animation: false }); else fitReadable(state.net);
-    $('#spotClear').hidden = !a;
-    if (!a) $('#surface')?.querySelectorAll('.focusable.on').forEach((x) => x.classList.remove('on'));
+    if (d) state.net.fit({ nodes: d.nodes, animation: false }); else fitReadable(state.net);
+    $('#spotClear').hidden = !d;
+    if (!d) $('#surface')?.querySelectorAll('.focusable.on').forEach((x) => x.classList.remove('on'));
   }
   function renderEndpoint(id, alerts) {
     const d = state.devices?.get(id) || { id };
