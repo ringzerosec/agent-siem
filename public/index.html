@@ -100,7 +100,12 @@
   #campaigns { padding: 16px 20px; overflow: auto; }
   #campaigns .camp-top h2 { margin: 0 0 4px; font-size: 18px; }
   #campaigns .camp-top p { margin: 0 0 14px; color: var(--muted-foreground); font-size: 13px; max-width: 900px; line-height: 1.5; }
-  #campaigns .camp-top p.how { font-size: 12px; margin-top: -8px; }
+  #campaigns details.how { margin: -8px 0 14px; font-size: 12px; color: var(--muted-foreground); }
+  #campaigns details.how summary { cursor: pointer; width: max-content; }
+  #campaigns details.how p { margin: 6px 0 0; font-size: 12px; }
+  .iso .ex { margin: 6px 0 0 46px; font-size: 12px; color: var(--muted-foreground); line-height: 1.5; }
+  .iso .ex details summary { cursor: pointer; width: max-content; color: var(--primary); }
+  .iso .ex details div { margin-top: 2px; }
   #campaigns .camp-body { display: grid; grid-template-columns: minmax(340px, 460px) 1fr; gap: 14px; align-items: start; }
   #campList { display: flex; flex-direction: column; gap: 10px; }
   .camp { padding: 12px 14px; cursor: pointer; }
@@ -426,8 +431,8 @@
 <div id="wall"><div id="wallEmpty">Waiting for devices…</div></div>
 
 <div id="campaigns" hidden>
-  <div class="camp-top"><div><h2>Linked attacks</h2><p>Attacks on different laptops that share something: the same server, the same skill, the same MCP server. A server we have seen before is flagged the first time any laptop contacts it, even under a new name. Shared infrastructure links attacks; it does not by itself prove one attacker.</p><p class="how">How this works: findings, hosts, IPs, skills and MCP tools are nodes in a FalkorDB graph, and attacks that connect through any of them are grouped with connected components (<code>algo.WCC</code>).</p></div></div>
-  <div class="card" id="playCard" style="margin-bottom:14px"><div class="card-header"><h2 class="sec">Playbooks <span class="dim">· same technique across endpoints, classified by the local model (<span id="brainName">Vega</span>, on this machine)</span></h2></div><div id="playList"></div></div>
+  <div class="camp-top"><div><h2>Linked attacks</h2><p>Attacks on different laptops that share a server, a skill or an MCP server.</p><details class="how"><summary>How it's grouped</summary><p>Findings, hosts, IPs, skills and MCP tools are nodes in a FalkorDB graph; attacks connected through any of them form one group (connected components, <code>algo.WCC</code>). A server seen before is flagged on first contact, even under a new name. Shared infrastructure links attacks; it does not by itself prove one attacker.</p></details></div></div>
+  <div class="card" id="playCard" style="margin-bottom:14px"><div class="card-header"><h2 class="sec">Same technique on several laptops <span class="dim">· local model: <span id="brainName">Vega</span></span></h2></div><div id="playList"></div></div>
   <div class="camp-body"><div id="campList"></div><div class="camp-graph card"><div class="card-header"><h2 class="sec" id="campTitle">Select a linked attack</h2></div><div id="campNet"></div></div></div>
 </div>
 <div id="ai" hidden>
@@ -799,6 +804,7 @@
     state.device = id; if (!keepFocus) state.focus = null; pushRoute();
     $('#detail').hidden = false; $('#back').hidden = false; $('#whole').hidden = true; $('#pageTitle').textContent = id;
     let gph = await (await fetch(q(`/api/graph/device/${encodeURIComponent(id)}`))).json();
+    if (state.device !== id) return;   // closed or switched while loading
     state.graph = gph;
     // Big endpoints (hundreds of nodes) open on the alert paths only; the
     // button toggles back to everything.
@@ -1144,7 +1150,7 @@
     if (state.net && !$('#spotClear').hidden) { openAlerts.clear(); spotlight(null); }
     state.device = null; state.focus = null; state.graph = null;
     $('#detail').hidden = true; $('#back').hidden = true; $('#pageTitle').textContent = TITLES[view] || ''; pushRoute();
-    if (state.net) { state.net.destroy(); state.net = null; }
+    if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); state.net = null; }
     $('#nodeDetail').hidden = true; $('#nodehint').hidden = false;
     if (view === 'wall') refitTiles();
   }
@@ -1274,11 +1280,20 @@
   };
   $('#shareCopy').onclick = async () => { try { await navigator.clipboard.writeText($('#shareUrl').textContent); $('#shareCopied').textContent = 'Copied'; } catch { $('#shareCopied').textContent = 'Select the link and copy it'; } };
 
+  let inboxSig = '';
   async function loadInbox() {
     const all = await (await fetch('/api/decisions')).json();
     const pending = all.filter((d) => d.status === 'pending');
     $('#inboxCount').textContent = pending.length; $('#inboxCount').classList.toggle('on', pending.length > 0);
     if ($('#inbox').hidden) return;
+    // Redraw only when something changed, and keep what the reader had open
+    // (a previewed email) and where they had scrolled: the 8 s refresh used
+    // to close the email mid-read.
+    const sig = JSON.stringify(all.slice(0, 30).map((d) => [d.id, d.status, (d.results || []).length]));
+    if (sig === inboxSig && $('#inboxList').childElementCount) return;
+    inboxSig = sig;
+    const openMail = new Set([...document.querySelectorAll('#inboxList .dec details[open]')].map((x) => x.closest('.dec')?.dataset.id));
+    const scrollTop = $('#inbox').scrollTop;
     const sev = (s) => `<span class="badge ${s === 'critical' ? 'solid' : 'warning'}">${esc(s)}</span>`;
     $('#inboxList').innerHTML = all.slice(0, 30).map((d) => {
       const mail = d.proposals.find((p) => p.type === 'escalate_to_owner');
@@ -1290,6 +1305,8 @@
           ? d.proposals.map((p) => `<button class="btn sm primary" data-approve="${esc(p.type)}">${esc(p.label)}</button>`).join('') + `<button class="btn sm" data-dismiss>Dismiss</button><button class="btn sm" data-open>Open endpoint</button>`
           : `<span class="badge outline">${esc(d.status)}</span> ${(d.results || []).map((r) => `<span class="dim" style="font-size:11.5px">${esc(r.type.replace(/_/g, ' '))}: ${esc(r.status || (r.ok ? 'done' : 'failed'))}</span>`).join(' ')}`}</div></div>`;
     }).join('') || '<div class="dim" style="padding:14px">Nothing waiting. New critical and high findings are investigated automatically and land here.</div>';
+    for (const el of document.querySelectorAll('#inboxList .dec')) if (openMail.has(el.dataset.id)) el.querySelector('details')?.setAttribute('open', '');
+    $('#inbox').scrollTop = scrollTop;
     $('#inboxList').querySelectorAll('.dec').forEach((el) => {
       const id = el.dataset.id;
       el.querySelectorAll('[data-approve]').forEach((b) => b.onclick = async () => { b.disabled = true; await fetch(`/api/decisions/${id}/approve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ only: [b.dataset.approve] }) }); loadInbox(); });
@@ -1331,7 +1348,10 @@
     for (let i = 0; i < 40; i++) { const st2 = await (await fetch(`/api/scan/${r.job}`)).json(); $('#govStatus').textContent = `scan ${r.job}: ${st2.done}/${st2.total} reported${st2.pending.length ? ` (waiting: ${st2.pending.join(', ')})` : ''}`; if (!st2.pending.length) break; await new Promise((ok) => setTimeout(ok, 2000)); }
     loadGov();
   };
-  $('#govPropose').onclick = async () => { const r = await (await fetch('/api/policies/propose', { method: 'POST' })).json(); $('#govStatus').textContent = `${r.created} new policy proposal${r.created === 1 ? '' : 's'} in the inbox (${r.proposals} total)`; loadInbox(); $('#inbox').hidden = false; loadInbox(); };
+  $('#govPropose').onclick = async () => { const r = await (await fetch('/api/policies/propose', { method: 'POST' })).json(); const waiting = r.proposals - r.created, pl = (n) => `${n} polic${n === 1 ? 'y' : 'ies'}`;
+    $('#govStatus').textContent = !r.proposals ? 'Nothing to propose: no findings call for a new policy.'
+      : r.created ? `Added ${pl(r.created)} to the inbox for approval${waiting ? `; ${waiting} more already waiting there` : ''}.`
+        : `No new proposals: all ${pl(r.proposals)} are already waiting in the inbox.`; loadInbox(); $('#inbox').hidden = false; loadInbox(); };
 
   // ---- AI usage / shadow AI --------------------------------------------------
   async function loadAi() {
@@ -1349,19 +1369,27 @@
 
   // ---- campaigns ------------------------------------------------------------
   let campData = [], campNet = null;
+  // One example per technique; near-duplicates (same laptop, same text but
+  // for a count) are dropped and the rest fold behind "more examples".
+  function playExamples(sample) {
+    const seen = new Set(), ex = [];
+    for (const x of sample) { const k = x.device + '|' + x.summary.replace(/\d+/g, '#'); if (!seen.has(k)) { seen.add(k); ex.push(`${esc(x.device)}: ${esc(x.summary)}`); } }
+    if (!ex.length) return '';
+    return `<div class="ex"><div>${ex[0]}</div>${ex.length > 1 ? `<details><summary>${ex.length - 1} more example${ex.length > 2 ? 's' : ''}</summary>${ex.slice(1, 6).map((e) => `<div>${e}</div>`).join('')}</details>` : ''}</div>`;
+  }
   async function loadCampaigns(selectId) {
     const [pb, brain] = await Promise.all([fetch('/api/playbooks').then((r) => r.json()), fetch('/api/brain').then((r) => r.json())]);
     $('#brainName').textContent = brain.ok ? `${brain.default}` : 'not running';
-    $('#playList').innerHTML = pb.length ? pb.map((p) => `<div class="iso"><div class="ih2"><span class="nm">${esc(p.technique)}</span><span class="badge outline">${p.endpoints.length} endpoint${p.endpoints.length > 1 ? 's' : ''}</span><span class="badge outline">${p.findings} findings</span>${p.blocked ? `<span class="badge contained">${p.blocked} blocked</span>` : ''}<span class="dim" style="font-size:11px">conf ${p.confidence}</span></div>
-      <ul>${p.sample.slice(0, 3).map((x) => `<li>${esc(x.device)}: ${esc(x.summary)}</li>`).join('')}</ul></div>`).join('')
+    $('#playList').innerHTML = pb.length ? pb.map((p) => `<div class="iso"><div class="ih2"><span class="nm">${esc(p.technique)}</span><span class="badge outline">${p.endpoints.length} endpoint${p.endpoints.length > 1 ? 's' : ''}</span><span class="badge outline">${p.findings} findings</span>${p.blocked ? `<span class="badge contained">${p.blocked} blocked</span>` : ''}<span class="dim" style="font-size:11px" title="Local model confidence">${Math.round(p.confidence * 100)}%</span></div>
+      ${playExamples(p.sample)}</div>`).join('')
       : `<div class="iso dim">${brain.ok ? 'Classifying findings…' : 'Start the local model (brain/run.sh) to group findings by technique.'}</div>`;
     campData = await (await fetch('/api/campaigns')).json();
     const sevBadge = (s) => `<span class="badge ${s === 'critical' ? 'solid' : s === 'high' ? 'warning' : 'outline'}">${esc(s)}</span>`;
     $('#campList').innerHTML = campData.length ? campData.map((c) => `<div class="camp card" data-id="${esc(c.id)}">
       <div class="ch">${sevBadge(c.severity)}<span class="cn">${esc(c.name)}</span><span class="badge outline">${c.endpoints.length} endpoint${c.endpoints.length > 1 ? 's' : ''}</span></div>
       <div class="cm">${c.findings} findings · ${c.blocked} blocked · ${esc(c.threats.join(' '))} · last ${ago(c.last)}</div>
-      <div class="ci">${c.indicators.hosts.map((h) => `<span>${esc(h)}</span>`).join('')}${c.indicators.ips.map((h) => `<span class="ip">${esc(h)}</span>`).join('')}${c.indicators.skills.map((h) => `<span class="sk">skill: ${esc(h)}</span>`).join('')}${c.indicators.mcp_tools.map((h) => `<span class="sk">mcp: ${esc(h)}</span>`).join('')}</div>
-      <div class="eps">${c.endpoints.map((d) => `<button data-dev="${esc(d)}">${esc(d)}</button>`).join('')}</div></div>`).join('')
+      <div class="ci">${c.indicators.hosts.slice(0, 4).map((h) => `<span>${esc(h)}</span>`).join('')}${c.indicators.hosts.length > 4 ? `<span title="${esc(c.indicators.hosts.slice(4).join(', '))}">+${c.indicators.hosts.length - 4} hosts</span>` : ''}${c.indicators.ips.length ? `<span class="ip" title="${esc(c.indicators.ips.join(', '))}">${c.indicators.ips.length} IP${c.indicators.ips.length > 1 ? 's' : ''}</span>` : ''}${c.indicators.skills.map((h) => `<span class="sk">skill: ${esc(h)}</span>`).join('')}${c.indicators.mcp_tools.map((h) => `<span class="sk">mcp: ${esc(h)}</span>`).join('')}</div>
+      <div class="eps">${c.endpoints.slice(0, 4).map((d) => `<button data-dev="${esc(d)}">${esc(d)}</button>`).join('')}${c.endpoints.length > 4 ? `<span class="dim" style="font-size:11px;align-self:center" title="${esc(c.endpoints.slice(4).join(', '))}">+${c.endpoints.length - 4} more</span>` : ''}</div></div>`).join('')
       : '<div class="dim" style="padding:12px">Nothing linked yet: attacks on different laptops appear here once they share a server, skill or MCP server.</div>';
     $('#campList').querySelectorAll('.camp').forEach((el) => el.onclick = (e) => {
       const dev = e.target.closest('[data-dev]')?.dataset.dev;
@@ -1380,19 +1408,23 @@
     const add = (n) => { if (!seen.has(n.id)) { seen.add(n.id); nodes.push(n); } };
     const font = { face: 'Geist Mono', size: 12, color: css('--label'), background: css('--label-bg') };
     for (const d of c.endpoints) add({ id: 'd:' + d, label: d, shape: 'box', color: { background: '#01696f', border: '#01696f' }, font: { ...font, color: '#fff', background: 'transparent' }, margin: 8 });
-    for (const f of c.devices_findings) {
-      add({ id: 'f:' + f.id, label: f.title.length > 38 ? f.title.slice(0, 36) + '…' : f.title, shape: 'dot', size: 9, color: f.severity === 'critical' ? '#dc2626' : '#d97706', font: { ...font, size: 10 } });
-      edges.push({ from: 'd:' + f.device, to: 'f:' + f.id, color: { color: '#cbd5e1' } });
+    // One dot per laptop and finding type (sized by how many), labels on
+    // hover: 188 findings should not become 188 labelled dots.
+    const groups = new Map();
+    for (const f of c.devices_findings) { const k = f.device + '|' + f.title; const g = groups.get(k) || { id: 'f:' + k, device: f.device, title: f.title, severity: f.severity, n: 0 }; g.n++; if (f.severity === 'critical') g.severity = 'critical'; groups.set(k, g); }
+    for (const g of groups.values()) {
+      add({ id: g.id, title: `${g.title} (${g.n})`, shape: 'dot', size: Math.min(7 + 2 * Math.sqrt(g.n), 16), color: g.severity === 'critical' ? '#dc2626' : '#d97706' });
+      edges.push({ from: 'd:' + g.device, to: g.id, color: { color: '#cbd5e1' } });
     }
     for (const h of c.indicators.hosts) add({ id: 'h:' + h, label: h, shape: 'circularImage', image: ICON.badhost, shapeProperties: { interpolation: false }, size: 16, font });
-    for (const ip of c.indicators.ips) add({ id: 'i:' + ip, label: ip, shape: 'diamond', size: 10, color: '#7c3aed', font });
+    for (const ip of c.indicators.ips) add({ id: 'i:' + ip, title: ip, shape: 'diamond', size: 7, color: '#7c3aed' });
     for (const sk of c.indicators.skills) add({ id: 's:' + sk, label: 'skill: ' + sk, shape: 'circularImage', image: ICON.badskill, shapeProperties: { interpolation: false }, size: 16, font });
     for (const t of c.indicators.mcp_tools) add({ id: 't:' + t, label: t, shape: 'circularImage', image: ICON.badtool, shapeProperties: { interpolation: false }, size: 16, font });
     // Findings to the indicators their summaries mention; hosts to their IPs.
-    for (const f of c.devices_findings) {
-      for (const h of c.indicators.hosts) edges.push({ from: 'f:' + f.id, to: 'h:' + h, color: { color: 'rgba(220,38,38,.35)' } });
-      for (const sk of c.indicators.skills) edges.push({ from: 'f:' + f.id, to: 's:' + sk, color: { color: 'rgba(220,38,38,.35)' } });
-      for (const t of c.indicators.mcp_tools) edges.push({ from: 'f:' + f.id, to: 't:' + t, color: { color: 'rgba(220,38,38,.35)' } });
+    for (const g of groups.values()) {
+      for (const h of c.indicators.hosts) edges.push({ from: g.id, to: 'h:' + h, color: { color: 'rgba(220,38,38,.35)' } });
+      for (const sk of c.indicators.skills) edges.push({ from: g.id, to: 's:' + sk, color: { color: 'rgba(220,38,38,.35)' } });
+      for (const t of c.indicators.mcp_tools) edges.push({ from: g.id, to: 't:' + t, color: { color: 'rgba(220,38,38,.35)' } });
     }
     for (const ip of c.indicators.ips) for (const h of c.indicators.hosts) edges.push({ from: 'h:' + h, to: 'i:' + ip, dashes: true, color: { color: '#a78bfa' } });
     const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges.filter((e) => !e.hidden)) };
@@ -1441,7 +1473,7 @@
   $('#whole').onclick = () => { state.focus = null; openDevice(state.device); };
   $('#fit').onclick = () => state.net && fitReadable(state.net);
   $('#spotClear').onclick = () => { openAlerts.clear(); document.querySelectorAll('#alerts li.alert.open').forEach((x) => x.classList.remove('open')); spotlight(null); };
-  $('#pathsOnly').onclick = () => { state.pathsOnly = !state.pathsOnly; state.pathsAuto = false; if (state.device) { state.net?.destroy(); state.net = null; openDevice(state.device, true); } };
+  $('#pathsOnly').onclick = () => { state.pathsOnly = !state.pathsOnly; state.pathsAuto = false; if (state.device) { if (state.net) { clearTimeout(state.net.__settle); state.net.destroy(); } state.net = null; openDevice(state.device, true); } };
   // Header counters filter the wall: critical, high (includes critical), or everything.
   document.querySelectorAll('button.stat[data-sev]').forEach((b) => b.onclick = () => {
     state.sev = state.sev === b.dataset.sev ? '' : b.dataset.sev;
@@ -1498,7 +1530,7 @@
       if (h.startsWith('endpoint/')) {
         const id = h.slice('endpoint/'.length);
         if (view !== 'wall') setView('wall');
-        if (state.device !== id) { if (state.device) closeDevice(); await openDevice(id); }
+        if (state.device !== id) { if (state.device) closeDevice(); const loading = openDevice(id); routing = false; await loading; }
       } else {
         const v = Object.keys(ROUTES).find((k) => ROUTES[k] === h) || 'wall';
         if (state.device) closeDevice();
